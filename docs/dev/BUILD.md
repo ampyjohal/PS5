@@ -76,6 +76,10 @@ SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridd
 
 Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newly created graphics or compute pipeline. This requires `VK_KHR_pipeline_executable_properties` and `pipelineExecutableInfo`; an unsupported device fails with an error. Statistic names and units are driver-specific. Capturing statistics can increase pipeline compilation cost. The setting is disabled by default.
 
+## Driver thread priority
+
+Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the video output presenter above the title's threads. On Linux the threads get nice `APS5_THREAD_NICE` (default -10) through rtkit, or through `setpriority` when rtkit is not available; on Windows they get `THREAD_PRIORITY_HIGHEST`. `APS5_THREAD_PRIORITY=rt` asks rtkit for `SCHED_FIFO` priority `APS5_THREAD_RT` (default 10, `RLIMIT_RTTIME` `APS5_THREAD_RTTIME_US`, default 200000) and falls back to the nice level; on Windows it sets `THREAD_PRIORITY_TIME_CRITICAL`. Each thread logs the outcome once as `[thread-priority]`. The setting is disabled by default.
+
 ## Shader recompiler
 
 The shader recompilation logic in [core/shader/recompiler](../../core/shader/recompiler) is isolated from the rest of the project and is a pure function of its input data, designed for integration into any other project. The current CMake target also includes cache support and links a supplied runtime target, glslang, and optionally SPIRV-Tools.

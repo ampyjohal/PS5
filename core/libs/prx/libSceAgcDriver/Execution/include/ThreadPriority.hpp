@@ -1,0 +1,10 @@
+#ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_THREADPRIORITY_HPP
+#define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_THREADPRIORITY_HPP
+
+namespace AgcDriver {
+
+void RaiseWorkerThreadPriority(const char* role);
+
+}
+
+#endif
