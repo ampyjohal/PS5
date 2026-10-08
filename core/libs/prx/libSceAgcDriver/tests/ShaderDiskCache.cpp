@@ -195,6 +195,7 @@ CompiledVariant sampleVariant() {
     image.r128 = true;
     image.fmaskCompatible = false;
     image.depthBitsCompatible = false;
+    image.foldTexelOffsetsOnly = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.indirectRoot = 0;
@@ -203,7 +204,7 @@ CompiledVariant sampleVariant() {
     image.indirectResources = {1, 2, 3};
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
-    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather}};
+    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true}};
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
