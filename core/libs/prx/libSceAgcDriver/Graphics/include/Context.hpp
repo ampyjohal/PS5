@@ -124,6 +124,7 @@ struct Context {
     bool occlusionQueryPrecise = false;
     bool depthBounds = false;
     bool depthBiasClamp = false;
+    bool dualSrcBlend = false;
     bool samplerFilterMinmax = false;
     bool conservativeRasterization = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
