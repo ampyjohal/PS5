@@ -67,7 +67,8 @@ struct ShaderSnapshot {
 };
 
 
-std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address);
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address);
+std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address);
 
 std::uint64_t NullPixelProgramAddress();
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot);
