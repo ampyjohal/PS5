@@ -81,6 +81,13 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             ++drawEntryCounters.absent;
         }
     }
+    if (decode != nullptr && !DecodeProgramsCurrent(*decode, *submission.shaders)) {
+        std::lock_guard cacheLock(drawCacheMutex);
+        eraseDrawEntry(drawKey, entry);
+        ++drawEntryCounters.absent;
+        entry = nullptr;
+        decode = nullptr;
+    }
     phaseTiming.Phase(DrawRowKeyLookupValidate);
 
     resolveDrawDecode(queue, submission, decode, registerKey, drawKey, profile);
