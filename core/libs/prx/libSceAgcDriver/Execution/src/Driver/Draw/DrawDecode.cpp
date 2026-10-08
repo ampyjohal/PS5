@@ -24,11 +24,19 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         require((high & ~0xffu) == 0, "reserved graphics program address bits are set");
         return (static_cast<std::uint64_t>(ReadGraphicsRegister(queue.shader, base)) << 8u) | (static_cast<std::uint64_t>(high) << 40u);
     };
+    const auto lookup = [&](std::uint64_t address, const char* unregistered) -> std::shared_ptr<const ShaderSnapshot> {
+        if (!staticAbi) return ProgramSnapshot(registry, address);
+        auto it = registry.upper_bound(address);
+        require(it != registry.begin(), unregistered);
+        --it;
+        require(address - it->second->codeAddress < it->second->code.size() * sizeof(std::uint32_t), "graphics program is outside registered shader code");
+        return it->second;
+    };
     const bool pixelSkipped = Graphics::PixelProgramSkipped(queue);
     const auto prepare = [&](std::uint64_t address, std::uint8_t type, Stage stage, std::uint32_t rsrc2, std::uint32_t userDataBase) {
         const bool nullPixel = stage == Stage::Fragment && (address == 0 || pixelSkipped);
         if (nullPixel) address = NullPixelProgramAddress();
-        const auto program = ProgramSnapshot(registry, address);
+        const auto program = lookup(address, "graphics program does not belong to a registered shader");
         const auto& snapshot = *program;
         require((address - snapshot.codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
         require(snapshot.header.empty() || snapshot.type == type, "graphics program refers to an incompatible shader binary type");
@@ -86,7 +94,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);
         } else if (graphics.stages.path == Graphics::ShaderPath::Geometry) {
             const auto frontAddress = programAddress(0xc8);
-            const auto front = ProgramSnapshot(registry, frontAddress);
+            const auto front = lookup(frontAddress, "geometry front program is not registered");
             const auto type = front->header.empty() ? std::uint8_t{2} : front->type;
             require(type == 2 || type == 4, "invalid geometry front binary type");
             append(0xc8, type, Stage::Mesh, 0x8b, 0x8c, Role::Main);
