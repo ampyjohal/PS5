@@ -23,15 +23,8 @@ namespace AgcDriver {
 
 namespace {
 
-enum class Mode { Off, High, Realtime };
-
-Mode RequestedMode() {
-    static const Mode mode = [] {
-        const char* text = std::getenv("APS5_THREAD_PRIORITY");
-        if (text == nullptr || *text == '\0' || std::strcmp(text, "off") == 0 || std::strcmp(text, "0") == 0) return Mode::Off;
-        if (std::strcmp(text, "rt") == 0 || std::strcmp(text, "realtime") == 0) return Mode::Realtime;
-        return Mode::High;
-    }();
+ThreadPriorityMode RequestedMode() {
+    static const ThreadPriorityMode mode = ParseThreadPriorityMode(std::getenv("APS5_THREAD_PRIORITY"));
     return mode;
 }
 
@@ -221,20 +214,9 @@ bool RtkitProperty(const char* name, std::int64_t& value, std::string& failure) 
 bool PrepareRealtime(std::uint32_t priority, const char* role, std::string& failure) {
     std::int64_t maxPriority = 0;
     std::int64_t maxRttime = 0;
-    if (!RtkitProperty("MaxRealtimePriority", maxPriority, failure) || !RtkitProperty("RTTimeUSecMax", maxRttime, failure)) return false;
-    if (static_cast<std::int64_t>(priority) > maxPriority) {
-        failure = "priority " + std::to_string(priority) + " is above rtkit's MaxRealtimePriority " + std::to_string(maxPriority);
-        return false;
-    }
-    if (maxRttime <= 0) {
-        failure = "rtkit reports RTTimeUSecMax " + std::to_string(maxRttime);
-        return false;
-    }
-    sched_param param{};
-    if (sched_getparam(0, &param) != 0 || sched_setscheduler(0, sched_getscheduler(0) | SCHED_RESET_ON_FORK, &param) != 0) {
-        failure = "SCHED_RESET_ON_FORK could not be set";
-        return false;
-    }
+    std::string rtkitFailure;
+    std::optional<RtkitLimits> rtkit;
+    if (RtkitProperty("MaxRealtimePriority", maxPriority, rtkitFailure) && RtkitProperty("RTTimeUSecMax", maxRttime, rtkitFailure)) rtkit = RtkitLimits{maxPriority, maxRttime};
     static std::mutex mutex;
     std::lock_guard lock(mutex);
     rlimit limit{};
@@ -242,12 +224,19 @@ bool PrepareRealtime(std::uint32_t priority, const char* role, std::string& fail
         failure = "getrlimit(RLIMIT_RTTIME) failed";
         return false;
     }
-    const rlim_t requested = static_cast<rlim_t>(std::max(1, EnvInt("APS5_THREAD_RTTIME_US", 200000)));
-    const rlim_t ceiling = std::min(requested, static_cast<rlim_t>(maxRttime));
-    rlimit wanted = limit;
-    if (wanted.rlim_max > ceiling) wanted.rlim_max = ceiling;
-    if (wanted.rlim_cur > wanted.rlim_max / 2) wanted.rlim_cur = wanted.rlim_max / 2;
-    if (wanted.rlim_cur == limit.rlim_cur && wanted.rlim_max == limit.rlim_max) return true;
+    const auto requested = static_cast<std::uint64_t>(std::max(1, EnvInt("APS5_THREAD_RTTIME_US", 200000)));
+    const auto plan = PlanRealtime(priority, rtkit, {limit.rlim_cur, limit.rlim_max}, requested);
+    if (!plan.refusal.empty()) {
+        failure = rtkit.has_value() ? plan.refusal : rtkitFailure;
+        return false;
+    }
+    sched_param param{};
+    if (sched_getparam(0, &param) != 0 || sched_setscheduler(0, sched_getscheduler(0) | SCHED_RESET_ON_FORK, &param) != 0) {
+        failure = "SCHED_RESET_ON_FORK could not be set";
+        return false;
+    }
+    if (!plan.limit.has_value()) return true;
+    const rlimit wanted{plan.limit->soft, plan.limit->hard};
     if (setrlimit(RLIMIT_RTTIME, &wanted) != 0) {
         failure = "setrlimit(RLIMIT_RTTIME) failed";
         return false;
@@ -262,7 +251,7 @@ bool PrepareRealtime(std::uint32_t priority, const char* role, std::string& fail
 void Raise(const char* role) {
     const auto tid = static_cast<std::uint64_t>(syscall(SYS_gettid));
     std::string failure;
-    if (RequestedMode() == Mode::Realtime) {
+    if (RequestedMode() == ThreadPriorityMode::Realtime) {
         const std::uint32_t priority = static_cast<std::uint32_t>(std::max(1, std::min(99, EnvInt("APS5_THREAD_RT", 10))));
         if (PrepareRealtime(priority, role, failure) && RtkitCall("MakeThreadRealtimeWithPID", tid, DbusTypeUint32, &priority, failure)) {
             const int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK;
@@ -286,7 +275,7 @@ void Raise(const char* role) {
 #else
 
 void Raise(const char* role) {
-    const int priority = RequestedMode() == Mode::Realtime ? THREAD_PRIORITY_TIME_CRITICAL : THREAD_PRIORITY_HIGHEST;
+    const int priority = RequestedMode() == ThreadPriorityMode::Realtime ? THREAD_PRIORITY_TIME_CRITICAL : THREAD_PRIORITY_HIGHEST;
     if (SetThreadPriority(GetCurrentThread(), priority)) LogOnce(role, priority == THREAD_PRIORITY_TIME_CRITICAL ? "time-critical" : "highest");
     else LogOnce(role, "SetThreadPriority failed");
 }
@@ -295,8 +284,26 @@ void Raise(const char* role) {
 
 }
 
+ThreadPriorityMode ParseThreadPriorityMode(const char* text) {
+    if (text == nullptr || *text == '\0' || std::strcmp(text, "off") == 0 || std::strcmp(text, "0") == 0) return ThreadPriorityMode::Off;
+    if (std::strcmp(text, "rt") == 0 || std::strcmp(text, "realtime") == 0) return ThreadPriorityMode::Realtime;
+    return ThreadPriorityMode::High;
+}
+
+RealtimePlan PlanRealtime(std::uint32_t priority, const std::optional<RtkitLimits>& rtkit, RttimeLimit current, std::uint64_t requestedUs) {
+    if (!rtkit.has_value()) return {"rtkit's limits are unknown", std::nullopt};
+    if (static_cast<std::int64_t>(priority) > rtkit->maxPriority) return {"priority " + std::to_string(priority) + " is above rtkit's MaxRealtimePriority " + std::to_string(rtkit->maxPriority), std::nullopt};
+    if (rtkit->maxRttimeUs <= 0) return {"rtkit reports RTTimeUSecMax " + std::to_string(rtkit->maxRttimeUs), std::nullopt};
+    const auto ceiling = std::min(requestedUs, static_cast<std::uint64_t>(rtkit->maxRttimeUs));
+    auto wanted = current;
+    if (wanted.hard > ceiling) wanted.hard = ceiling;
+    if (wanted.soft > wanted.hard / 2) wanted.soft = wanted.hard / 2;
+    if (wanted == current) return {};
+    return {{}, wanted};
+}
+
 void RaiseWorkerThreadPriority(const char* role) {
-    if (RequestedMode() == Mode::Off) return;
+    if (RequestedMode() == ThreadPriorityMode::Off) return;
     Raise(role);
 }
 

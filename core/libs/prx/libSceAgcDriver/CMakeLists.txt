@@ -290,6 +290,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_thread_priority_tests EXCLUDE_FROM_ALL
+        tests/ThreadPriority.cpp
+        Execution/src/ThreadPriority.cpp
+)
+target_include_directories(agc_thread_priority_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_thread_priority_tests PRIVATE ${CMAKE_DL_LIBS})
+set_target_properties(agc_thread_priority_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_thread_priority_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_thread_priority_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_thread_priority COMMAND agc_thread_priority_tests)
+endif()
+
 add_test_executable(agc_structurizer_tests EXCLUDE_FROM_ALL tests/Structurizer.cpp)
 target_link_libraries(agc_structurizer_tests PRIVATE shader_recompiler_agc_driver libc)
 set_target_properties(agc_structurizer_tests PROPERTIES CXX_EXTENSIONS OFF)
