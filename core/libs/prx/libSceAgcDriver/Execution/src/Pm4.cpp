@@ -258,7 +258,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     // neither changes what the packet writes.
     const auto flags = header & 0xffu;
     const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a;
-    auto allowedFlags = opcode == 0x11 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
+    auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
     if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {
@@ -320,10 +320,10 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[8] & 3u) == 0 && packet[8] >= (opcode == 0x2c ? 16u : 20u), "invalid indirect draw stride");
             require((packet[9] & ~0x20u) == (opcode == 0x2c ? 2u : 0u), "unsupported indirect draw initiator");
             break;
-        case 0x15: size(5); if ((packet[4] & ~0xa020u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
+        case 0x15: size(5); if ((packet[4] & ~0xa024u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
         case 0x16:
             require(packet.size() == 3 || packet.size() == 4, "invalid indirect dispatch size");
-            require((packet.back() & ~0xa020u) == 0x41u, "indirect dispatch modifiers are not implemented");
+            require((packet.back() & ~0xa024u) == 0x41u, "indirect dispatch modifiers are not implemented");
             break;
         case 0x22:
             size(5);
@@ -391,7 +391,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x63: case 0x64: case 0x9f:
             if (opcode != 0x63) graphics();
             size(5);
-            require((packet[1] & 3u) == 0 && packet[3] == 0x80000000u && packet[4] <= 0x3fffu, "unsupported indirect-register address or control fields");
+            require((packet[1] & 3u) == 0 && packet[4] <= 0x3fffu && (packet[3] == 0x80000000u || ((packet[3] & ~0xffffu) == 0 && packet[4] <= 0x10000u - packet[3])), "unsupported indirect-register address or control fields");
             break;
         case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) break;
@@ -748,9 +748,20 @@ DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueSta
 
 std::vector<std::uint32_t> ReadIndirectRegisters(std::span<const std::uint32_t> packet) {
     require(packet.size() == 5 && IndirectRegisterOpcode((packet[0] >> 8u) & 0xffu), "expected indirect register packet");
-    std::vector<std::uint32_t> pairs(static_cast<std::size_t>(packet[4]) * 2);
     // Named for the [hooksync] attribution (the read goes through the flush hook).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Registers);
+    if (packet[3] != 0x80000000u) {
+        std::vector<std::uint32_t> values(packet[4]);
+        GuestMemory::Read(address(packet[1], packet[2]), std::as_writable_bytes(std::span(values)), 4);
+        std::vector<std::uint32_t> pairs;
+        pairs.reserve(values.size() * 2);
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            pairs.push_back(packet[3] + static_cast<std::uint32_t>(i));
+            pairs.push_back(values[i]);
+        }
+        return pairs;
+    }
+    std::vector<std::uint32_t> pairs(static_cast<std::size_t>(packet[4]) * 2);
     GuestMemory::Read(address(packet[1], packet[2]), std::as_writable_bytes(std::span(pairs)), 4);
     return pairs;
 }

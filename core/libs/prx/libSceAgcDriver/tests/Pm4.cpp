@@ -90,10 +90,15 @@ void testRegisters() {
         pairs[4] = 0xffffffffu;
         expectFailure([&] { execute(state, packet); }, "sentinel");
         check(!registers.contains(0x12), "invalid indirect packet partially changed state");
+        std::array<std::uint32_t, 2> values{0x11223344, 0x55667788};
+        execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x0a, 2}));
+        check(registers.at(0x0a) == 0x11223344 && registers.at(0x0b) == 0x55667788, "consecutive indirect registers lost");
+        expectFailure([&] { execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0xffff, 2})); }, "indirect-register");
+        expectFailure([&] { execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x4000000a, 2})); }, "indirect-register");
         packet[1] = 0x1000;
         packet[2] = 0;
         expectFailure([&] { execute(state, packet); }, "guest");
-        packet[3] = 0;
+        packet[3] = 0x10000;
         expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "control");
     }
     execute(state, makePacket(0x69, {0x11, 50, 51}));
@@ -163,6 +168,10 @@ void testContextAndBases() {
     AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x2041}), 0);
     AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0xa041}), 0);
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x4041}), 0); }, "dispatch modifiers");
+    AgcDriver::Pm4::Validate(makePacket(0x15, {0x280, 1, 1, 0x2045}, 2), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x2045}, 2), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x41}, 4), 0); }, "header flags");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x49}), 0); }, "dispatch modifiers");
     execute(state, makePacket(0x13, {32}));
     execute(state, makePacket(0x26, {0x1000, 1}));
     execute(state, makePacket(0x2a, {1}));
