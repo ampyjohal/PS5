@@ -516,6 +516,21 @@ void testProgramSnapshots() {
     check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a decode with the rewritten program was not current");
 }
 
+void testProgramWorkgroupUse() {
+    const auto snapshot = [](std::vector<std::uint32_t> code) {
+        AgcDriver::DriverDetail::ShaderSnapshot result{0x1000, 0, 2, std::move(code), {}};
+        return result;
+    };
+    const auto plain = snapshot({0xbf800000, 0xbf810000});
+    check(!AgcDriver::DriverDetail::ProgramUsesWorkgroup(plain, 0) && !AgcDriver::DriverDetail::ProgramUsesWorkgroup(plain, 0), "a program without LDS or barriers needs a workgroup");
+    const auto barrier = snapshot({0xbf8a0000, 0xbf810000});
+    check(AgcDriver::DriverDetail::ProgramUsesWorkgroup(barrier, 0), "an s_barrier did not need a workgroup");
+    const auto lds = snapshot({0xd8340000, 0x00000100, 0xbf810000});
+    check(AgcDriver::DriverDetail::ProgramUsesWorkgroup(lds, 0) && AgcDriver::DriverDetail::ProgramUsesWorkgroup(lds, 0), "an LDS write did not need a workgroup");
+    const auto entry = snapshot({0xbf8a0000, 0xbf810000, 0xbf800000, 0xbf810000});
+    check(!AgcDriver::DriverDetail::ProgramUsesWorkgroup(entry, 2) && AgcDriver::DriverDetail::ProgramUsesWorkgroup(entry, 0), "the workgroup check did not start at the program's entry");
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -601,6 +616,7 @@ int main() {
         check(!unterminated.empty() && bounded->code.size() == 64, "raw compute crossed inaccessible memory or missed its last instruction");
 #endif
         testProgramSnapshots();
+        testProgramWorkgroupUse();
         testEvents();
         testValidation();
         testClearState();
