@@ -19,7 +19,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address) {
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
@@ -82,7 +82,16 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
             if (snapshot.code.size() == available) break;
         }
     }
-    throw std::runtime_error("AGC driver: raw compute program has no reachable end within mapped code or the size limit");
+    throw std::runtime_error("AGC driver: raw shader program has no reachable end within mapped code or the size limit");
+}
+
+std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address) {
+    auto it = shaders.upper_bound(address);
+    if (it != shaders.begin()) {
+        --it;
+        if (address - it->second->codeAddress < it->second->code.size() * sizeof(std::uint32_t)) return it->second;
+    }
+    return ReadRawShader(address);
 }
 
 
