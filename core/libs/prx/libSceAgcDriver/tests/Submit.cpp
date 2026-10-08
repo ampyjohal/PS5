@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -537,6 +538,18 @@ void testProgramSnapshots() {
     check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an unregistered program was not read as raw code");
     check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress) == unregistered, "an empty registry did not fall back to raw code");
     check(!expectFailure([] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot({}, 0)); }).empty(), "an unmapped unregistered program was accepted");
+    AgcDriver::DriverDetail::DrawDecode decode{};
+    decode.programs.resize(2);
+    decode.programs[0].snapshot = unregistered;
+    decode.programs[1].snapshot = entry;
+    decode.programs[1].codeOffset = 8;
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "an unchanged decode was not current");
+    registered[8] = 0xbf810000;
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten registered program made a decode stale");
+    raw[0] = 0xbf810000;
+    check(!AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten unregistered program left its decode current");
+    decode.programs[0].snapshot = AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress);
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a decode with the rewritten program was not current");
 }
 
 void testWorkerFailure() {
