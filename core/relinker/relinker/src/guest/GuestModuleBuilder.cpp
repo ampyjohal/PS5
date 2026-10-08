@@ -67,12 +67,19 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
     }
     const auto neededNames = ReadNeededNames(dynamic);
-    std::set<std::string> missingNeeded;
-    for (const auto& name : neededNames) {
-        if (excludedModules.contains(name)) continue;
-        if (std::none_of(paths.begin(), paths.end(), [&](const auto& path) { return path.filename().string() == name; })) missingNeeded.insert(name);
-    }
-    if (!missingNeeded.empty()) {
+    Io::FileReader reader;
+    std::map<std::filesystem::path, GuestImage> discovered;
+    std::set<std::string> searchedNeeded;
+    std::vector<std::string> wantedNeeded = neededNames;
+    while (true) {
+        std::set<std::string> missingNeeded;
+        for (const auto& name : wantedNeeded) {
+            if (excludedModules.contains(name) || searchedNeeded.contains(name)) continue;
+            if (std::none_of(paths.begin(), paths.end(), [&](const auto& path) { return path.filename().string() == name; })) missingNeeded.insert(name);
+        }
+        if (missingNeeded.empty()) break;
+        searchedNeeded.insert(missingNeeded.begin(), missingNeeded.end());
+        wantedNeeded.clear();
         std::map<std::string, std::filesystem::path> found;
         for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator(); ++it) {
             if (it->is_directory() && std::find(directories.begin(), directories.end(), it->path()) != directories.end()) {
@@ -83,7 +90,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (!it->is_regular_file() || !missingNeeded.contains(name) || !isElf(it->path())) continue;
             if (!found.emplace(name, it->path()).second) throw Domain::RelinkerException("Ambiguous needed module: " + found.at(name).string() + " and " + it->path().string());
         }
-        for (const auto& [name, path] : found) paths.push_back(path);
+        for (const auto& [name, path] : found) {
+            paths.push_back(path);
+            const auto& image = discovered.emplace(path, GuestImageReader().Read(path, reader.Read(path.string()))).first->second;
+            wantedNeeded.insert(wantedNeeded.end(), image.Dependencies.begin(), image.Dependencies.end());
+        }
     }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
@@ -93,9 +104,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::map<std::string, std::vector<std::size_t>> exports;
     std::map<std::string, std::set<std::size_t>> sharedExports;
     std::set<std::string> outputNames;
-    Io::FileReader reader;
     for (const auto& path : paths) {
-        auto image = GuestImageReader().Read(path, reader.Read(path.string()));
+        const auto cached = discovered.find(path);
+        auto image = cached != discovered.end() ? std::move(cached->second) : GuestImageReader().Read(path, reader.Read(path.string()));
         if (image.OutputName.find_first_of("$\r\n") != std::string::npos) throw Domain::RelinkerException("Unsupported guest filename: " + image.OutputName);
         std::string folded = image.OutputName;
         if (windows) {
