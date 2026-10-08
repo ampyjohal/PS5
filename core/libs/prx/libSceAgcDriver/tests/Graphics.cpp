@@ -522,6 +522,14 @@ void ComputeScratchTests() {
     Require(back.request.context.compute->scratchDwords == 24u, "the compute scratch size did not survive serialization");
 }
 
+void HeaderlessVertexStageTests() {
+    const std::array<std::uint32_t, 4> userData{1, 2, 3, 4};
+    const auto info = AgcDriver::Graphics::DecodeVertexStageInfo({}, 0, userData);
+    Require(!info.fetchEmbedded && info.resourcesNum == 0, "a vertex program without an AGC header received an embedded fetch table");
+    const std::array<std::byte, 8> truncated{};
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeVertexStageInfo(truncated, 0x1000, userData)); }, "smaller than the fixed AGC header");
+}
+
 void PixelInputLayoutTests() {
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputVgpr;
@@ -2826,6 +2834,7 @@ int main() {
         ShaderStageTests();
         TuningFieldTests();
         PixelInputLayoutTests();
+        HeaderlessVertexStageTests();
         ComputeScratchTests();
         InitialContextTests();
         pushConstantTests();

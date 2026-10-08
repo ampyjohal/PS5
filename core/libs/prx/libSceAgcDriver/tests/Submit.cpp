@@ -516,6 +516,29 @@ void testRegisteredFloatMode() {
     }
 }
 
+void testProgramSnapshots() {
+    alignas(256) static std::array<std::uint32_t, 64> registered{};
+    registered.fill(0xbf800000);
+    registered[0] = 0xbf810000;
+    alignas(256) static std::array<std::uint32_t, 64> raw{};
+    raw.fill(0xbf800000);
+    raw[1] = 0xbf810000;
+    const auto registeredAddress = reinterpret_cast<std::uintptr_t>(registered.data());
+    const auto rawAddress = reinterpret_cast<std::uintptr_t>(raw.data());
+    AgcDriver::DriverDetail::ShaderRegistry shaders;
+    AgcDriver::DriverDetail::ShaderSnapshot snapshot{registeredAddress, 0x1000, 2, {}, {}};
+    snapshot.code.assign(registered.begin(), registered.end());
+    snapshot.header.resize(sizeof(Shader));
+    const auto entry = std::make_shared<const AgcDriver::DriverDetail::ShaderSnapshot>(std::move(snapshot));
+    shaders.emplace(registeredAddress, entry);
+    check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress) == entry, "a registered program was not resolved to its registration");
+    check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress + 4 * 8) == entry, "an entry inside registered code was not resolved to its registration");
+    const auto unregistered = AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress);
+    check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an unregistered program was not read as raw code");
+    check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress) == unregistered, "an empty registry did not fall back to raw code");
+    check(!expectFailure([] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot({}, 0)); }).empty(), "an unmapped unregistered program was accepted");
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -600,6 +623,7 @@ int main() {
         check(VirtualFree(mapping, 0, MEM_RELEASE) != 0, "cannot release raw compute boundary test");
         check(!unterminated.empty() && bounded->code.size() == 64, "raw compute crossed inaccessible memory or missed its last instruction");
 #endif
+        testProgramSnapshots();
         testEvents();
         testValidation();
         testClearState();
