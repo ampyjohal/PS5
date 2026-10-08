@@ -123,7 +123,9 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::vector<ShaderRecompiler::LinkedProgram> linked;
     for (std::size_t i = 0; i < programs.size(); ++i) {
         const auto& program = programs[i];
-        memory.insert(memory.end(), program.memory.begin(), program.memory.end());
+        for (const auto& region : program.memory) {
+            if (!region.bytes.empty()) memory.push_back(region);
+        }
         linked.push_back({roles[i], program.binary, program.userDataBase, program.firstUserSgpr, program.userData});
     }
     timing.Mark("prepare");
@@ -234,6 +236,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto buildRectList = [&] {
         phaseTiming.Phase(DrawRowVectors);
         require(programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr, "rect-list requires vertex and fragment programs");
+        if (programs[0].snapshot->header.empty()) ResolvePreparedGraphics(*programs[0].snapshot, programs[1].snapshot, 17u, localDevice->Target());
         auto rectangle = PreparedRectangle(*programs[0].snapshot, programResults[0]->variantId, programResults[1]->variantId);
         if (rectListBuilt) {
             results[rectIndex] = std::move(rectangle.control);

@@ -11,6 +11,8 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "CompiledVariant.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <algorithm>
+#include <span>
 #include <cstdlib>
 #include <cstring>
 #include <list>
@@ -19,7 +21,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address) {
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
@@ -82,7 +84,30 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
             if (snapshot.code.size() == available) break;
         }
     }
-    throw std::runtime_error("AGC driver: raw compute program has no reachable end within mapped code or the size limit");
+    throw std::runtime_error("AGC driver: raw shader program has no reachable end within mapped code or the size limit");
+}
+
+std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address) {
+    auto it = shaders.upper_bound(address);
+    if (it != shaders.begin()) {
+        --it;
+        if (address - it->second->codeAddress < it->second->code.size() * sizeof(std::uint32_t)) return it->second;
+    }
+    return ReadRawShader(address);
+}
+
+bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    constexpr std::uint8_t Unknown = 0, Unused = 1, Used = 2;
+    if (codeOffset == 0) {
+        const auto cached = snapshot.workgroupUse->load(std::memory_order_acquire);
+        if (cached != Unknown) return cached == Used;
+    }
+    const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(std::span(snapshot.code).subspan(codeOffset));
+    const bool used = std::any_of(decoded.instructions.begin(), decoded.instructions.end(), [](const auto& instruction) {
+        return instruction.family == ShaderRecompiler::RdnaInstructionFamily::DS || instruction.op == ShaderRecompiler::RdnaOpcode::SBarrier;
+    });
+    if (codeOffset == 0) snapshot.workgroupUse->store(used ? Used : Unused, std::memory_order_release);
+    return used;
 }
 
 
@@ -176,8 +201,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
     }
     if (snapshot.header.empty()) {
-        if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
-        APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
+        APS5_LOG_ERR("%s shader 0x%llx was not registered; preparing its artifact at first use", request.shader.stage == ShaderRecompiler::ShaderStage::Compute ? "Compute" : "Graphics", static_cast<unsigned long long>(snapshot.codeAddress));
         auto handle = ShaderRecompiler::PrepareShader(request);
         snapshot.prepared->entries.push_back({codeOffset, handle});
         return handle;
@@ -217,13 +241,12 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
     }
     if (snapshot.header.empty()) {
-        if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
-        APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
+        APS5_LOG_ERR("%s shader 0x%llx was not registered; preparing its artifact at first use", request.shader.stage == ShaderRecompiler::ShaderStage::Compute ? "Compute" : "Graphics", static_cast<unsigned long long>(snapshot.codeAddress));
         auto handle = ShaderRecompiler::PrepareShader(request);
         invocationRequest = request;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
         auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
-        if (!invocation.has_value()) throw std::runtime_error("AGC driver: raw compute artifact does not match its invocation");
+        if (!invocation.has_value()) throw std::runtime_error("AGC driver: unregistered shader artifact does not match its invocation");
         snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
         return std::move(*invocation);
     }

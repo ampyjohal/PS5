@@ -100,8 +100,8 @@ struct State {
     std::array<float, 4> blendConstants;
 };
 
-ShaderStages DecodeShaderStages(const QueueState& queue);
-State DecodeState(const QueueState& queue);
+ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
+State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
