@@ -346,6 +346,12 @@ void testCopies() {
     check(destination[0] == 11 && destination[1] == 12 && destination[2] == 0, "64-bit COPY_DATA failed");
     execute(state, makePacket(0x40, {0x105, 0x12345678, 0, low(destination.data()), high(destination.data())}));
     check(destination[0] == 0x12345678, "immediate COPY_DATA failed");
+    execute(state, makePacket(0x40, {0x505, 0x7654321, 0, low(destination.data()), high(destination.data())}));
+    check(destination[0] == 0x7654321, "immediate COPY_DATA to DST_SEL 5 memory failed");
+    alignas(8) std::array<std::uint64_t, 1> stamp{};
+    execute(state, makePacket(0x40, {0x110509, 0, 0, low(stamp.data()), high(stamp.data())}));
+    check(stamp[0] != 0, "GPU timestamp COPY_DATA to DST_SEL 5 memory failed");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x305, 1, 0, 0, 0}), 0); }, "GDS or performance-counter destination");
     alignas(8) std::array<std::uint32_t, 2> clearValues{0x55, 0x3f800000};
     execute(state, makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa00a, 0}));
     check(state.context.at(0x0a) == 0x55 && state.context.at(0x0b) == 0x3f800000, "COPY_DATA to two context registers failed");

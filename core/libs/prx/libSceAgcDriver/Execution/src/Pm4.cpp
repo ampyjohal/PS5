@@ -465,7 +465,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 require(packet[5] == 0 && packet[4] >= ContextRegisterBase && packet[4] - ContextRegisterBase <= 0x400u - copyDataCount(packet), "COPY_DATA to a register outside the context registers is not implemented");
                 break;
             }
-            require(destination == 2 || destination == 4, "COPY_DATA GDS destination is not implemented");
+            require(destination == 2 || destination == 4 || destination == 10, "COPY_DATA GDS or performance-counter destination is not implemented");
             require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource, "COPY_DATA register, GDS or reference-clock source is not implemented");
             require(source < 10 || source == CopyDataGpuClockSource || ((packet[1] & 0x10000u) == 0 && packet[3] == 0), "64-bit immediate COPY_DATA is not implemented");
             break;
