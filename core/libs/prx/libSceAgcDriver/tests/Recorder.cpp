@@ -1172,6 +1172,10 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         std::cout << "host import of the watched block refused: draw snapshot reuse not tested\n";
         return;
     }
+    if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "host imports are compared, not watched: draw snapshot reuse not tested\n";
+        return;
+    }
     const auto element = address + 4096;
     constexpr std::size_t elementBytes = 1024;
     ShaderRecompiler::RecompileResult program;
@@ -1688,8 +1692,8 @@ void importWatchTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
 #ifdef _WIN32
-    static_cast<void>(context);
-    std::cout << "import watch decisions: Linux write watch only\n";
+    Require(PrepareImportWatch(context) == ImportWatch::Unwatch, "Windows host imports stayed watched by default");
+    std::cout << "import watch decisions: Windows host imports use comparisons\n";
 #else
     if (context.hostImportAlignment == 0 || !WriteWatched()) {
         std::cout << "host imports or write watching unavailable: import watch decisions not tested\n";
@@ -2468,6 +2472,17 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
     Require(resources.RefreshData(recorder.Commands(), original, &recorder), "the refresh back recorded nothing");
     Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "the refreshed template's hash is not the original words'");
     Require(!resources.RefreshData(recorder.Commands(), original, &recorder), "a refresh with equal words recorded");
+    auto replaced = patched;
+    replaced.bindings[0].role = ShaderRecompiler::DescriptorRole::GuestSamplers;
+    replaced.bindings[0].kind = ShaderRecompiler::DescriptorKind::Sampler;
+    const CompiledShader changedResources{ShaderRecompiler::ShaderStage::Compute, &replaced, 0};
+    bool rejected = false;
+    try {
+        static_cast<void>(resources.RefreshData(recorder.Commands(), changedResources, &recorder));
+    } catch (const std::exception& error) {
+        rejected = std::string_view(error.what()).find("cannot replace bound resources") != std::string_view::npos;
+    }
+    Require(rejected && resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "a data refresh changed the bound resources");
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
