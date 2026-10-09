@@ -29,6 +29,7 @@ namespace AgcDriver::Graphics {
         std::uint32_t columnEnd = 0;
         std::uint32_t rowBegin = 0;
         std::uint32_t rowEnd = 0;
+        std::uint32_t pipeBankXor = 0;
     };
 
     class TextureDetiler {
