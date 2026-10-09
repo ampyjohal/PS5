@@ -216,6 +216,9 @@ int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if ((static_cast<std::uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 ||
+     len > DIRECT_MEMORY_SIZE || static_cast<std::uint64_t>(start) > DIRECT_MEMORY_SIZE - len)
+     return SCE_KERNEL_ERROR_EINVAL;
  DirectMemoryFree(start, len);
  return 0;
 }
