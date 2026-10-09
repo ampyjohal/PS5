@@ -40,6 +40,31 @@ static void Extract(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, 
     Require(user.Argument(1)->Resolve()->ImmediateU32() == fieldOffset);
     Require(user.Argument(2)->Resolve()->ImmediateU32() == count);
 }
+static void Moved() {
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Pixel;
+    program.Resources().resourceTrackingComplete = true;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& ancillary = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
+    auto& helper = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::HelperInvocation)), &builder.Constant(0u)});
+    auto& live = builder.Emit(IrOpcode::IEqual32, IrType::U1, {&helper, &builder.Constant(0u)});
+    auto& kept = builder.Emit(IrOpcode::SelectU32, IrType::U32, {&live, &builder.Constant(0u), &ancillary});
+    static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&kept}));
+    static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
+    Lower(program);
+    const IrValue* word = kept.Argument(2)->Resolve();
+    Require(word->Opcode() == IrOpcode::BitwiseOr32);
+    const IrValue* sample = word->Argument(0)->Resolve();
+    const IrValue* layer = word->Argument(1)->Resolve();
+    Require(sample->Opcode() == IrOpcode::ShiftLeftLogical32 && sample->Argument(1)->Resolve()->ImmediateU32() == 8u);
+    Require(static_cast<StageInputKind>(sample->Argument(0)->Resolve()->Argument(0)->Resolve()->ImmediateU32()) == StageInputKind::SampleId);
+    Require(layer->Opcode() == IrOpcode::ShiftLeftLogical32 && layer->Argument(1)->Resolve()->ImmediateU32() == 16u);
+    Require(static_cast<StageInputKind>(layer->Argument(0)->Resolve()->Argument(0)->Resolve()->ImmediateU32()) == StageInputKind::Layer);
+}
 static void Refused(IrOpcode opcode, std::uint32_t offset, std::uint32_t count) {
     IrProgram program;
     static_cast<void>(Build(program, opcode, offset, count));
@@ -56,6 +81,7 @@ int main() {
     Extract(IrOpcode::BitFieldUExtract, 9u, 2u, StageInputKind::SampleId, 1u);
     Extract(IrOpcode::BitFieldUExtract, 16u, 13u, StageInputKind::Layer, 0u);
     Extract(IrOpcode::BitFieldSExtract, 20u, 9u, StageInputKind::Layer, 4u);
+    Moved();
     Refused(IrOpcode::BitwiseOr32, 1u, 0u);
     Refused(IrOpcode::BitFieldUExtract, 2u, 4u);
     Refused(IrOpcode::BitFieldUExtract, 10u, 4u);

@@ -213,10 +213,31 @@ bool lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
         }
         return *fields[index];
     };
+    IrValue* word = nullptr;
+    const auto packed = [&]() -> IrValue& {
+        if (word == nullptr) {
+            const auto create = [&](IrOpcode opcode, IrValue& lhs, IrValue& rhs) -> IrValue& {
+                IrValue& created = program.CreateValue(opcode, IrType::U32);
+                created.AddArgument(&lhs);
+                created.AddArgument(&rhs);
+                ancillary.Parent()->InsertInstructionBefore(&ancillary, &created);
+                return created;
+            };
+            IrValue& sample = create(IrOpcode::ShiftLeftLogical32, field(0u), builder.Constant(8u));
+            IrValue& layer = create(IrOpcode::ShiftLeftLogical32, field(1u), builder.Constant(16u));
+            word = &create(IrOpcode::BitwiseOr32, sample, layer);
+        }
+        return *word;
+    };
     constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 2> ranges {{{8u, 4u}, {16u, 13u}}};
     bool lowered = false;
     for (const IrUse& use : uses) {
         IrValue& user = *use.user;
+        if ((user.Opcode() == IrOpcode::SelectU32 && use.operand != 0u) || user.Opcode() == IrOpcode::Phi) {
+            user.ReplaceArgument(use.operand, &packed());
+            lowered = true;
+            continue;
+        }
         if ((user.Opcode() != IrOpcode::BitFieldUExtract && user.Opcode() != IrOpcode::BitFieldSExtract) || use.operand != 0u) {
             continue;
         }
