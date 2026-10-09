@@ -22,6 +22,11 @@ public:
         if (found == Values.end()) return std::nullopt;
         return found->second;
     }
+    std::vector<Domain::VirtualAddress> Targets() const override {
+        std::vector<Domain::VirtualAddress> result;
+        for (const auto& [slot, target] : Values) result.push_back(target);
+        return result;
+    }
 };
 
 }
