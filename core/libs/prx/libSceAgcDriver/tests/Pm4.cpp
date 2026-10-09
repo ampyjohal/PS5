@@ -346,6 +346,16 @@ void testCopies() {
     check(destination[0] == 11 && destination[1] == 12 && destination[2] == 0, "64-bit COPY_DATA failed");
     execute(state, makePacket(0x40, {0x105, 0x12345678, 0, low(destination.data()), high(destination.data())}));
     check(destination[0] == 0x12345678, "immediate COPY_DATA failed");
+    alignas(8) std::array<std::uint32_t, 2> clearValues{0x55, 0x3f800000};
+    execute(state, makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa00a, 0}));
+    check(state.context.at(0x0a) == 0x55 && state.context.at(0x0b) == 0x3f800000, "COPY_DATA to two context registers failed");
+    execute(state, makePacket(0x40, {0x1, low(&clearValues[1]), high(&clearValues[1]), 0xa323, 0}));
+    check(state.context.at(0x323) == 0x3f800000 && !state.context.contains(0x324), "COPY_DATA to one context register failed");
+    check(!AgcDriver::Pm4::ResolveStore(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0xa00a, 0}), state, 64).has_value(), "COPY_DATA to a register resolved as a memory store");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x5, 7, 0, 0xa00a, 0}), 0); }, "to a register from a register, GDS, immediate");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0x2e40, 0}), 0); }, "outside the context registers");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa3ff, 0}), 0); }, "outside the context registers");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()) + 2, high(clearValues.data()), 0xa00a, 0}), 0); }, "misaligned COPY_DATA source");
     alignas(8) std::array<std::uint64_t, 2> clock{};
     const auto clockCopy = [&](std::uint64_t* target) { return makePacket(0x40, {0x06016209, 0, 0, low(target), high(target)}); };
     execute(state, clockCopy(&clock[0]));

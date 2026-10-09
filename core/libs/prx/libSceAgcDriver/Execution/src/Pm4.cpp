@@ -132,6 +132,15 @@ void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t byt
 
 constexpr std::uint32_t CopyDataGpuClockSource = 18;
 constexpr std::uint32_t CopyDataCachePolicy = (3u << 13u) | (3u << 25u);
+constexpr std::uint32_t ContextRegisterBase = 0xa000;
+
+bool copyDataToRegister(std::span<const std::uint32_t> packet) {
+    return ((packet[1] >> 8u) & 0xfu) == 0;
+}
+
+std::uint32_t copyDataCount(std::span<const std::uint32_t> packet) {
+    return (packet[1] & 0x10000u) != 0 ? 2u : 1u;
+}
 
 std::uint64_t gpuClockCount() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
@@ -450,7 +459,13 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & ~(0x40110f0fu | CopyDataCachePolicy)) == 0, "COPY_DATA engine or reserved fields are not implemented");
             const auto source = ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u);
             const auto destination = ((packet[1] >> 8u) & 0xfu) << 1u;
-            require(destination == 2 || destination == 4, "COPY_DATA register or GDS destination is not implemented");
+            if (copyDataToRegister(packet)) {
+                require(source == 2 || source == 4, "COPY_DATA to a register from a register, GDS, immediate or clock source is not implemented");
+                require((packet[2] & 3u) == 0, "misaligned COPY_DATA source");
+                require(packet[5] == 0 && packet[4] >= ContextRegisterBase && packet[4] - ContextRegisterBase <= 0x400u - copyDataCount(packet), "COPY_DATA to a register outside the context registers is not implemented");
+                break;
+            }
+            require(destination == 2 || destination == 4, "COPY_DATA GDS destination is not implemented");
             require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource, "COPY_DATA register, GDS or reference-clock source is not implemented");
             require(source < 10 || source == CopyDataGpuClockSource || ((packet[1] & 0x10000u) == 0 && packet[3] == 0), "64-bit immediate COPY_DATA is not implemented");
             break;
@@ -575,7 +590,7 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
     const auto fits = [limit](std::uint64_t destination, std::size_t bytes) { return bytes <= limit && destination % 4 == 0 && bytes % 4 == 0; };
     switch ((packet[0] >> 8u) & 0xffu) {
         case 0x40: {
-            if (packet.size() < 6) return std::nullopt;
+            if (packet.size() < 6 || copyDataToRegister(packet)) return std::nullopt;
             const auto source = ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u);
             const std::size_t bytes = (packet[1] & 0x10000u) != 0 ? 8 : 4;
             const auto destination = address(packet[4], packet[5]);
@@ -901,6 +916,14 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             return;
         }
         case 0x40: {
+            if (copyDataToRegister(packet)) {
+                std::array<std::uint32_t, 2> values{};
+                const auto count = copyDataCount(packet);
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Registers);
+                GuestMemory::Read(address(packet[2], packet[3]), std::as_writable_bytes(std::span(values).first(count)), 4);
+                for (std::uint32_t i = 0; i < count; ++i) writeRegister(queue, 0x69, packet[4] - ContextRegisterBase + i, values[i]);
+                return;
+            }
             const auto destination = address(packet[4], packet[5]);
             const auto data = copyDataSource(packet, (packet[1] & 0x10000u) != 0 ? 8 : 4);
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), data.size(), 1, true);
