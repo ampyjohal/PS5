@@ -320,7 +320,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[8] & 3u) == 0 && packet[8] >= (opcode == 0x2c ? 16u : 20u), "invalid indirect draw stride");
             require((packet[9] & ~0x20u) == (opcode == 0x2c ? 2u : 0u), "unsupported indirect draw initiator");
             break;
-        case 0x15: size(5); if ((packet[4] & ~0xa024u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
+        case 0x15: size(5); if ((packet[4] & ~0xa026u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
         case 0x16:
             require(packet.size() == 3 || packet.size() == 4, "invalid indirect dispatch size");
             require((packet.back() & ~0xa024u) == 0x41u, "indirect dispatch modifiers are not implemented");
@@ -629,6 +629,20 @@ std::uint64_t DispatchArgumentAddress(std::span<const std::uint32_t> packet, con
     require(queue.dispatchIndirectBase != 0, "indirect dispatch base has not been set");
     require(packet[1] <= std::numeric_limits<std::uint64_t>::max() - queue.dispatchIndirectBase, "indirect dispatch address overflow");
     return queue.dispatchIndirectBase + packet[1];
+}
+
+std::array<std::uint32_t, 3> PartialGroupThreads(const std::array<std::uint32_t, 3>& groups, const std::array<std::uint32_t, 3>& numThreads) {
+    std::array<std::uint32_t, 3> threads{};
+    bool partial = false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const auto full = numThreads[axis] & 0xffffu;
+        const auto last = numThreads[axis] >> 16u;
+        require(last != 0 && last <= full, "COMPUTE_NUM_THREAD partial group size is zero or exceeds the full group");
+        if (groups[axis] == 0) return {};
+        threads[axis] = (groups[axis] - 1) * full + last;
+        partial |= last != full;
+    }
+    return partial ? threads : std::array<std::uint32_t, 3>{};
 }
 
 std::array<std::uint32_t, 5> ReadDispatchArguments(std::uint64_t arguments, std::uint32_t initiator) {
