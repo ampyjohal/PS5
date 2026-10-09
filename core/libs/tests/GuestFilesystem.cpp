@@ -17,7 +17,9 @@ int APS5_VABI rename_nid_postfix(const char*, const char*);
 int APS5_VABI sceKernelChmod_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelFchmod(int, unsigned short);
 int APS5_VABI fchmod_nid_postfix(int, int);
+int APS5_VABI chmod_nid_postfix(const char*, int);
 int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
+int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI sceKernelFsync(int);
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t*);
@@ -50,6 +52,10 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 int main() {
+    Require(chmod_nid_postfix(nullptr, 0600) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelChmod_nid_postfix(nullptr, 0600) == static_cast<int>(0x8002000eu));
+    Require(chmod_nid_postfix("anyps5_missing_chmod_path", 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelChmod_nid_postfix("anyps5_missing_chmod_path", 0600) == static_cast<int>(0x80020002u));
     Require(sceKernelDebugOutText(-1, "text") == static_cast<int>(0x80020016u));
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
@@ -139,11 +145,12 @@ int main() {
     Require(sceKernelFtruncate(descriptor, 3) == 0);
     FileStat times{};
     const KernelTimeval past[2]{{1000000000, 0}, {1000000000, 500000}};
-    Require(futimes_nid_postfix(descriptor, past) == 0);
+    Require(sceKernelFutimes(descriptor, past) == 0);
     Require(stat_nid_postfix(sized.string().c_str(), &times) == 0 && times.st_mtim.tv_sec == 1000000000);
     Require(futimes_nid_postfix(descriptor, nullptr) == 0);
     Require(stat_nid_postfix(sized.string().c_str(), &times) == 0 && times.st_mtim.tv_sec > 1000000000);
     const KernelTimeval overflow[2]{{0, 0}, {0, 1000000}};
+    Require(sceKernelFutimes(descriptor, overflow) == static_cast<int>(0x80020016u));
     Require(futimes_nid_postfix(descriptor, overflow) == -1 && *__error_nid_postfix() == 22);
     const KernelTimeval negative[2]{{0, -1}, {0, 0}};
     Require(futimes_nid_postfix(descriptor, negative) == -1 && *__error_nid_postfix() == 22);
@@ -152,6 +159,7 @@ int main() {
 #ifndef _WIN32
     Require(sceKernelFchmod(descriptor, 0600) == static_cast<int>(0x80020009u));
     Require(fchmod_nid_postfix(descriptor, 0600) == -1 && *__error_nid_postfix() == 9);
+    Require(sceKernelFutimes(descriptor, nullptr) == static_cast<int>(0x80020009u));
     Require(futimes_nid_postfix(descriptor, nullptr) == -1 && *__error_nid_postfix() == 9);
 #endif
     const int socket = socket_nid_postfix(2, 2, 0);

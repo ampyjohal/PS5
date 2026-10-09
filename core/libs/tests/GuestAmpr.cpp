@@ -57,6 +57,9 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounter_04_00(std::uint8_t
 int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject*, std::int16_t, const void*, std::uint32_t, const std::uint32_t*);
 int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject*, std::uint32_t, const char*, const std::uint32_t*);
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
+int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, std::uint32_t*);
+int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, int*);
+int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint32_t, void*, std::uint64_t, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint64_t, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t);
@@ -159,7 +162,10 @@ void RequireAppended(const Recorder& recorder, std::uint32_t offset, std::uint32
     Require(recorder.Commands() == commands + 1);
     Apr::CommandHeader header;
     std::memcpy(&header, recorder.memory.data() + offset, sizeof(header));
-    Require(header.opcode == opcode && header.bytes == measured);
+    if (opcode == Apr::Opcode::CompactReadFileGather) {
+        Require((static_cast<std::uint32_t>(header.opcode) & 0xffu) == static_cast<std::uint32_t>(opcode));
+        Require(measured == sizeof(Apr::CompactReadFileGatherCommand));
+    } else Require(header.opcode == opcode && header.bytes == measured);
 }
 
 void RequireRecorded(const Recorder& recorder, std::uint32_t offset, std::uint32_t commands, Apr::Opcode opcode, std::uint64_t measured, const std::string& text) {
@@ -504,6 +510,23 @@ bool MatchesFile(const std::uint8_t* data, std::size_t offset, std::size_t bytes
     return true;
 }
 
+void TestResolveFailures() {
+    const char* paths[]{"ampr_resolve_existing.bin", "ampr_resolve_missing.bin"};
+    { std::ofstream file(paths[0], std::ios::binary); file << "data"; }
+    std::uint32_t ids[]{123, 123};
+    std::uint64_t sizes[]{123, 123};
+    std::uint32_t failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
+    Require(sizes[0] == 4);
+    int results[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
+    Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    Require(ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
+    std::remove(paths[0]);
+}
+
 void TestGatherScatter() {
     const char* path = "ampr_gather_scatter.bin";
     {
@@ -513,6 +536,15 @@ void TestGatherScatter() {
     std::uint32_t fileId = 0;
     std::uint32_t failed = 0;
     Require(sceKernelAprResolveFilepathsToIds(&path, 1, &fileId, &failed) == 0);
+
+    Recorder compact(64);
+    std::array<std::uint8_t, 24> compactData{};
+    Require(sceAmprAprCommandBufferReadFile(&compact.buffer, &compact.gatherState, &compact.scatterState, fileId, compactData.data(), 8, 100) == 0);
+    Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 108) == 0);
+    Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 116) == 0);
+    Require(compact.Offset() == 64);
+    Require(sceKernelAprSubmitCommandBuffer(&compact.buffer, 0) == 0);
+    Require(MatchesFile(compactData.data(), 100, compactData.size()));
 
     Recorder recorder;
     auto* buffer = &recorder.buffer;
@@ -529,7 +561,7 @@ void TestGatherScatter() {
     auto offset = recorder.Offset();
     auto commands = recorder.Commands();
     Require(sceAmprAprCommandBufferReadFileGather(buffer, map, state, 8, 500) == 0);
-    RequireAppended(recorder, offset, commands, Apr::Opcode::ReadFileGather, sceAmprMeasureCommandSizeReadFileGather(8, 500));
+    RequireAppended(recorder, offset, commands, Apr::Opcode::CompactReadFileGather, sceAmprMeasureCommandSizeReadFileGather(8, 500));
     offset = recorder.Offset();
     commands = recorder.Commands();
     Require(sceAmprAprCommandBufferReadFileScatter(buffer, map, state, second.data(), 8) == 0);
@@ -569,7 +601,7 @@ void TestGatherScatter() {
     Require(sceAmprAprCommandBufferReadFile(nullptr, map, state, fileId, first.data(), 4, 0) == invalidArgument);
     Require(empty.Offset() == 0 && empty.Commands() == 0);
     Require(sceAmprMeasureCommandSizeReadFileGather(0, 0) == rejected);
-    Require(sceAmprMeasureCommandSizeReadFileGather(0x100000000ull, 0x10000000000ull - 1u) == sizeof(Apr::ReadFileCommand));
+    Require(sceAmprMeasureCommandSizeReadFileGather(0x100000000ull, 0x10000000000ull - 1u) == sizeof(Apr::CompactReadFileGatherCommand));
     Require(sceAmprMeasureCommandSizeReadFileGather(4, 0x10000000000ull) == rejected);
     Require(sceAmprMeasureCommandSizeReadFileScatter(first.data(), 0x100000001ull) == rejected);
     Require(sceAmprMeasureCommandSizeReadFileScatter(high, 4) == rejected);
@@ -912,7 +944,7 @@ void TestAmmPrt() {
     Require(sceAmprAmmCommandBufferRemapIntoPrt(&unbound, prt, source, page, cpuReadWrite, 0) == permissionDenied);
     Require(sceAmprAmmCommandBufferUnmapToPrt(&unbound, prt, page) == permissionDenied);
     std::array<std::uint8_t, 64> loose{};
-    Apr::CommandBufferObject sized{nullptr, static_cast<std::uint32_t>(loose.size()), 0, 0, Apr::BufferType::Generic, 0};
+    Apr::CommandBufferObject sized{Apr::BufferType::Generic, 0, 0, 0, static_cast<std::uint32_t>(loose.size()), nullptr};
     Require(sceAmprAmmCommandBufferMapAsPrt(&sized, prt, page) == permissionDenied);
     Require(sceAmprAmmMeasureAmmCommandSizeMapAsPrt(prt, 0) == ammRejected);
     Require(sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(prt, page, 0, 0x08) == ammRejected);
@@ -938,6 +970,7 @@ int main() {
     TestVersionedCommands();
     TestVersionedCounters();
     TestConstructed();
+    TestResolveFailures();
     TestGatherScatter();
     TestAmm();
     TestAmmRemapAndProtect();
