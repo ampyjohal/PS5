@@ -171,6 +171,9 @@ void testContextAndBases() {
     AgcDriver::Pm4::Validate(makePacket(0x15, {0x280, 1, 1, 0x2045}, 2), 0);
     AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x2045}, 2), 0);
     AgcDriver::Pm4::Validate(makePacket(0x15, {0xc0, 1, 1, 0x2047}, 2), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x15, {0xc0, 1, 1, 0x2007}, 2), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x2005}, 2), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x40}), 0); }, "dispatch modifiers");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x2047}, 2), 0); }, "indirect dispatch modifiers");
     using Threads = std::array<std::uint32_t, 3>;
     check(AgcDriver::Pm4::PartialGroupThreads({0xc0, 1, 1}, {0x00400040, 0x00010001, 0x00010001}) == Threads{}, "complete last groups reported partial threads");

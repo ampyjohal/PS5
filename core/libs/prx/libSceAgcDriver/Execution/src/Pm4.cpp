@@ -329,10 +329,10 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[8] & 3u) == 0 && packet[8] >= (opcode == 0x2c ? 16u : 20u), "invalid indirect draw stride");
             require((packet[9] & ~0x20u) == (opcode == 0x2c ? 2u : 0u), "unsupported indirect draw initiator");
             break;
-        case 0x15: size(5); if ((packet[4] & ~0xa026u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
+        case 0x15: size(5); if ((packet[4] & ~0xa066u) != 0x1u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
         case 0x16:
             require(packet.size() == 3 || packet.size() == 4, "invalid indirect dispatch size");
-            require((packet.back() & ~0xa024u) == 0x41u, "indirect dispatch modifiers are not implemented");
+            require((packet.back() & ~0xa064u) == 0x1u, "indirect dispatch modifiers are not implemented");
             break;
         case 0x22:
             size(5);
