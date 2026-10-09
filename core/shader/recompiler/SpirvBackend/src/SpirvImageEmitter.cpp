@@ -984,7 +984,12 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         ctx.Fail(access.inst, "stores through a bindless image table are unsupported");
     }
     const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
-    EmitIfCondition(state, ctx.Arg(access.inst, 3), [&]() {
+    auto condition = ctx.Arg(access.inst, 3);
+    if (access.mem.imageDimension == RdnaImageDimension::Dim2D && access.image.dimension == RdnaImageDimension::Dim1D) {
+        if (access.mem.imageAddressComponents < 2u) ctx.Fail(access.inst, "has an image address with too few coordinate components");
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 1u), ConstantU32(state, 0u)));
+    }
+    EmitIfCondition(state, condition, [&]() {
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? LodU32(ctx, access) : 0u;
         const auto coord = CoordU32(ctx, access);
         const auto texel = access.mem.imagePacked ? PackedStoreTexel(ctx, access, ctx.Arg(access.inst, 2)) : StoreTexel(ctx, access, ctx.Arg(access.inst, 2), uintImage);
