@@ -916,19 +916,19 @@ void verifyPixelRequestSerialization() {
     minimal.context.waveSize = 64;
     minimal.context.pixel = ShaderPixelStageInfo{};
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQQ0AAAA=", "new requests did not use serialization version 13");
+    require(requestPrefix(encoded, 8u) == "NVNQQQ8AAAA=", "new requests did not use serialization version 15");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
-    for (std::size_t bytes = 0; bytes < 8u; ++bytes) {
-        expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated version-12 pixel mapping was accepted");
+    for (std::size_t bytes = 0; bytes < 17u; ++bytes) {
+        expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing or dual-source flag was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQQ4AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
 }
 
 void verifyLegacyPixelRequests() {
     using namespace ShaderRecompiler;
-    static constexpr std::array<std::string_view, 10> legacyPixelRequests{
+    static constexpr std::array<std::string_view, 14> legacyPixelRequests{
         "NVNQQQEAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAkAAAAAAAAAAAAA"
@@ -979,6 +979,26 @@ void verifyLegacyPixelRequests() {
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgkAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAEEAAAAMBAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         "AAsAAAAAAAAAgAAAAAAAAQAAAAA=",
+        "NVNQQQsAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAABBAAAADAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAALAAAAAAAAAIAAAAAAAAEAAAAA",
+        "NVNQQQwAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAABBAAAADAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAALAAAAAAAAAIAAAAAAAAEAAAAAAA==",
+        "NVNQQQ0AAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAQQAAAAwEAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAACwAAAAAAAACAAAAAAAABAAAAAAA=",
+        "NVNQQQ4AAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBAAAADAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAALAAAAAAAAAIAAAAAAAAEAAAAAAA==",
     };
     const RequestSerializer serializer;
     for (std::size_t index = 0; index < legacyPixelRequests.size(); ++index) {
@@ -988,6 +1008,8 @@ void verifyLegacyPixelRequests() {
         require(request.context.pixel.has_value(), "legacy pixel state was lost");
         const auto& pixel = *request.context.pixel;
         require(pixel.targetExportMapping == std::array<std::uint8_t, 8>{}, "legacy pixel mapping no longer defaults to zero");
+        require(pixel.targetExportPacking == std::array<ColorExportPacking, 8>{}, "a legacy request packed a color export");
+        require(!pixel.dualSourceBlend, "a legacy request enabled dual-source blending");
         require(pixel.inputAddr == 2u && pixel.hasPerspectiveCenterVgpr && pixel.targetOutputMode[0] == 9u, "legacy pixel layout was misread");
         require(pixel.conservativeZExport == (version >= 7u ? ConservativeZExport::GreaterThanZ : ConservativeZExport::AnyZ), "legacy conservative Z layout was misread");
         require(!pixel.orderedPixelShader, "a legacy request became a primitive-ordered pixel shader");

@@ -10,6 +10,7 @@
 #include "SceShaders.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "CacheKey.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "BdaAbi.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -2451,6 +2452,232 @@ void pixelParameterSlotTests() {
     expectFailure([&] { recompilePixel({0x423u, 0x3u}, shared); }, "passes its vertices through unchanged");
 }
 
+ShaderRecompiler::RecompileRequest packedExportRequest(const AgcDriver::QueueState& queue, const AgcDriver::Graphics::State& state, std::span<const std::uint32_t> code) {
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderRecompiler::ShaderStage::Fragment, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state));
+    request.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 64;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = true;
+    return request;
+}
+
+void unorm10_11_11TargetTests() {
+    using ShaderRecompiler::ColorExportPacking;
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context.at(0x31c) & ~0x7cu) | (6u << 2u);
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.color.format == VK_FORMAT_R32_UINT && state.color.elementBytes == 4 && state.color.bytes == colorMemory.size() && state.color.packing == ColorExportPacking::Unorm10_11_11, "a 10_11_11 unorm target did not decode as a packed R32_UINT attachment");
+    const auto packings = AgcDriver::Graphics::ExportPackings(state);
+    Require(packings[0] == ColorExportPacking::Unorm10_11_11 && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the 10_11_11 unorm packing alone");
+    auto changed = queue;
+    changed.context[0x31c] |= 7u << 8u;
+    const auto floating = AgcDriver::Graphics::DecodeState(changed);
+    Require(floating.color.format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && floating.color.packing == ColorExportPacking::None, "a 10_11_11 float target changed");
+    changed = queue;
+    changed.context[0x31c] |= 1u << 8u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 6 number type 1");
+    changed = queue;
+    changed.context[0x1e0] = 0x40010001u;
+    for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
+    changed = queue;
+    changed.context[0x8e] = 3;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of a 10_11_11 unorm color target");
+    changed.context[0x8e] = 7;
+    Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Unorm10_11_11, "an RGB write of a 10_11_11 unorm target was refused");
+    for (const auto format : {5u, 6u}) {
+        changed = queue;
+        changed.context[0x1c5] = format;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "color export format " + std::to_string(format) + " into a 10_11_11 unorm target");
+    }
+    changed = queue;
+    changed.context[0x1c5] = 4;
+    Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Unorm10_11_11, "an FP16_ABGR export into a 10_11_11 unorm target was refused");
+    changed = queue;
+    changed.context[0x31c] |= 0x10000000u;
+    changed.context[0x325] = 0x1234;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "DCC-compressed 10_11_11 unorm color targets");
+    changed = queue;
+    changed.context[0x31c] |= 0x40000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "truncating (ROUND_MODE) 10_11_11 unorm color targets");
+
+    constexpr std::array<std::uint32_t, 3> code{0xf800180fu, 0x07060504u, 0xbf810000u};
+    const auto request = packedExportRequest(queue, state, code);
+    auto plain = request;
+    plain.context.pixel->targetExportPacking.fill(ColorExportPacking::None);
+    const ShaderRecompiler::RequestSerializer serializer;
+    Require(serializer.Deserialize(serializer.Serialize(request)).request.context.pixel->targetExportPacking == request.context.pixel->targetExportPacking, "the 10_11_11 unorm packing was lost in serialization");
+    std::vector<std::uint64_t> key;
+    std::vector<std::uint64_t> plainKey;
+    ShaderRecompiler::BuildPreparedShaderKey(request, key);
+    ShaderRecompiler::BuildPreparedShaderKey(plain, plainKey);
+    Require(key == plainKey, "the export packing entered the static shader ABI");
+    const auto prepared = ShaderRecompiler::PrepareShader(plain);
+    Require(ShaderRecompiler::MatchesPreparedShader(request, *prepared), "a packed draw did not match the registered pixel shader");
+    const auto packed = ShaderRecompiler::Recompile(request);
+    const auto unpacked = ShaderRecompiler::Recompile(plain);
+    Require(packed.variantId == unpacked.variantId && packed.variantId == ShaderRecompiler::GetPreparedArtifact(*prepared).variantId, "the packed draw did not reuse the registered artifact");
+    Require(packed.PipelineVariantId() != unpacked.PipelineVariantId() && packed.spirv.Words() != unpacked.spirv.Words(), "the export packing did not specialize the module");
+    Require(ShaderRecompiler::Recompile(request).PipelineVariantId() == packed.PipelineVariantId(), "the packed specialization was not reused");
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = makeModule({});
+    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    const auto validate = [&](const ShaderRecompiler::RecompileResult& pixel, const AgcDriver::Graphics::State& target) {
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
+        return AgcDriver::Graphics::ValidateShaders(shaders, target, subgroup, false);
+    };
+    Require(validate(packed, state) == std::set<std::uint32_t>{0u}, "the packed export did not reach attachment 0");
+    expectFailure([&] { validate(unpacked, state); }, "uint4 words to its packed 10_11_11 unorm attachments");
+    auto plainState = state;
+    plainState.colors[0].packing = ColorExportPacking::None;
+    expectFailure([&] { validate(packed, plainState); }, "float4 colors");
+    auto uintExport = request;
+    uintExport.context.pixel->targetOutputMode[0] = 7;
+    expectFailure([&] { ShaderRecompiler::Recompile(uintExport); }, "fragment output 0 has no 10_11_11 unorm packing path");
+}
+
+AgcDriver::QueueState dualSourceQueue() {
+    auto queue = makeState();
+    queue.context[0x8f] = 0xffu;
+    queue.context[0x1c5] = 0x44u;
+    queue.context[0x1e0] = 0x40010f01u;
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    return queue;
+}
+
+struct OutputDecorations {
+    std::map<std::uint32_t, std::uint32_t> locations;
+    std::map<std::uint32_t, std::uint32_t> indices;
+};
+
+OutputDecorations outputDecorations(std::span<const std::uint32_t> words) {
+    OutputDecorations result;
+    std::set<std::uint32_t> outputs;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        if (op == spv::OpVariable && words[at + 3] == spv::StorageClassOutput) outputs.insert(words[at + 2]);
+        if (op != spv::OpDecorate) continue;
+        if (words[at + 2] == spv::DecorationLocation) result.locations[words[at + 1]] = words[at + 3];
+        if (words[at + 2] == spv::DecorationIndex) result.indices[words[at + 1]] = words[at + 3];
+    }
+    std::erase_if(result.locations, [&](const auto& entry) { return !outputs.contains(entry.first); });
+    return result;
+}
+
+void DualSourceBlendTests() {
+    auto queue = dualSourceQueue();
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.dualSourceBlend && state.colors.size() == 1 && state.blends.size() == 1, "an ONE + SRC1_COLOR blend did not decode as dual-source blending into one target");
+    Require(state.blends[0].srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.blends[0].dstColorBlendFactor == VK_BLEND_FACTOR_SRC1_COLOR && state.blends[0].srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && state.blends[0].dstAlphaBlendFactor == VK_BLEND_FACTOR_SRC1_COLOR, "BLEND_SRC1_COLOR did not become VK_BLEND_FACTOR_SRC1_COLOR");
+    const std::array<std::pair<std::uint32_t, VkBlendFactor>, 4> factors{{{15u, VK_BLEND_FACTOR_SRC1_COLOR}, {16u, VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR}, {17u, VK_BLEND_FACTOR_SRC1_ALPHA}, {18u, VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA}}};
+    for (const auto& [value, factor] : factors) {
+        auto changed = queue;
+        changed.context[0x1e0] = 0x60000000u | (value << 24u) | (1u << 16u) | (value << 8u) | value;
+        const auto decoded = AgcDriver::Graphics::DecodeState(changed);
+        Require(decoded.dualSourceBlend && decoded.blends[0].srcColorBlendFactor == factor && decoded.blends[0].dstColorBlendFactor == factor && decoded.blends[0].srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && decoded.blends[0].dstAlphaBlendFactor == factor, "blend factor " + std::to_string(value) + " decoded wrongly");
+    }
+    auto changed = queue;
+    changed.context[0x1e0] = 0x00010f01u;
+    Require(!AgcDriver::Graphics::DecodeState(changed).dualSourceBlend, "SRC1 factors of a disabled blend enabled dual-source blending");
+    changed = queue;
+    changed.context[0x1e0] = 0x40010001u;
+    Require(!AgcDriver::Graphics::DecodeState(changed).dualSourceBlend, "a blend without SRC1 factors enabled dual-source blending");
+    for (const auto operation : {2u, 3u}) {
+        changed.context[0x1e0] = 0x40010f01u | (operation << 5u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MIN or MAX operation");
+    }
+    changed.context[0x1e0] = 0x40010f01u | (4u << 5u);
+    Require(AgcDriver::Graphics::DecodeState(changed).blends[0].colorBlendOp == VK_BLEND_OP_REVERSE_SUBTRACT, "a reverse-subtract dual-source blend was refused");
+    changed = queue;
+    changed.context[0x8f] = 0xfu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MRT slots 0 and 1");
+    changed.context[0x8f] = 0xfffu;
+    changed.context[0x1c5] = 0x444u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MRT slots 0 and 1");
+    changed.context[0x8f] = 0xf000fu;
+    changed.context[0x1c5] = 0x44u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MRT slots 0 and 1");
+    alignas(256) static std::array<std::byte, 1024> slotOneMemory{};
+    changed = queue;
+    for (const auto offset : {0x31bu, 0x31cu, 0x31du}) changed.context[offset + 0xfu] = changed.context.at(offset);
+    for (const auto offset : {0x3b0u, 0x3b8u}) changed.context[offset + 1u] = changed.context.at(offset);
+    changed.context[0x318 + 0xfu] = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(slotOneMemory.data()) >> 8u);
+    changed.context[0x390 + 1u] = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(slotOneMemory.data()) >> 40u);
+    changed.context[0x1e1] = 0;
+    changed.context[0x8e] = 0xffu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "color writes to slot 0 alone");
+    for (const auto format : {0x04u, 0x14u, 0x74u, 0x94u}) {
+        changed = queue;
+        changed.context[0x1c5] = format;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MRT1 export in the MRT0 export format");
+    }
+    changed = queue;
+    changed.context[0x1c5] = 0x99u;
+    Require(AgcDriver::Graphics::DecodeState(changed).dualSourceBlend, "a 32_ABGR MRT0 and MRT1 export pair was refused");
+    for (const auto mask : {0x7fu, 0xf7u}) {
+        changed = queue;
+        changed.context[0x8f] = mask;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "MRT1 export with the MRT0 shader mask");
+    }
+    changed = queue;
+    changed.context[0x31c] = 0x8804u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "component-swapped color target");
+
+    constexpr std::array<std::uint32_t, 5> code{0xf800000fu, 0x07060504u, 0xf800181fu, 0x0b0a0908u, 0xbf810000u};
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderRecompiler::ShaderStage::Fragment, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state));
+    request.context.pixel->dualSourceBlend = state.dualSourceBlend;
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 64;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = true;
+    auto plain = request;
+    plain.context.pixel->dualSourceBlend = false;
+    const ShaderRecompiler::RequestSerializer serializer;
+    Require(serializer.Deserialize(serializer.Serialize(request)).request.context.pixel->dualSourceBlend, "dual-source blending was lost in serialization");
+    std::vector<std::uint64_t> key;
+    std::vector<std::uint64_t> plainKey;
+    ShaderRecompiler::BuildPreparedShaderKey(request, key);
+    ShaderRecompiler::BuildPreparedShaderKey(plain, plainKey);
+    Require(key == plainKey, "dual-source blending entered the static shader ABI");
+    const auto prepared = ShaderRecompiler::PrepareShader(plain);
+    Require(ShaderRecompiler::MatchesPreparedShader(request, *prepared), "a dual-source draw did not match the registered pixel shader");
+    const auto dual = ShaderRecompiler::Recompile(request);
+    const auto single = ShaderRecompiler::Recompile(plain);
+    Require(dual.variantId == single.variantId && dual.variantId == ShaderRecompiler::GetPreparedArtifact(*prepared).variantId, "the dual-source draw did not reuse the registered artifact");
+    Require(dual.PipelineVariantId() != single.PipelineVariantId() && ShaderRecompiler::Recompile(request).PipelineVariantId() == dual.PipelineVariantId(), "dual-source blending did not key its own specialization");
+    const auto dualOutputs = outputDecorations(dual.spirv.Words());
+    const auto singleOutputs = outputDecorations(single.spirv.Words());
+    Require(dualOutputs.locations.size() == 2 && std::all_of(dualOutputs.locations.begin(), dualOutputs.locations.end(), [](const auto& entry) { return entry.second == 0u; }) && dualOutputs.indices.size() == 1 && dualOutputs.indices.begin()->second == 1u, "the MRT1 export of a dual-source draw was not the location 0 index 1 output");
+    std::set<std::uint32_t> singleLocations;
+    for (const auto& entry : singleOutputs.locations) singleLocations.insert(entry.second);
+    Require(singleOutputs.indices.empty() && singleLocations == std::set<std::uint32_t>{0u, 1u}, "MRT0 and MRT1 without dual-source blending did not keep locations 0 and 1");
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = makeModule({});
+    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    const auto validate = [&](const ShaderRecompiler::RecompileResult& pixel, const AgcDriver::Graphics::State& target) {
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
+        return AgcDriver::Graphics::ValidateShaders(shaders, target, subgroup, false);
+    };
+    Require(validate(dual, state) == std::set<std::uint32_t>{0u}, "the dual-source shader did not validate against its draw");
+    expectFailure([&] { validate(single, state); }, "needs a float4 second color at location 0 index 1");
+    auto singleState = state;
+    singleState.dualSourceBlend = false;
+    expectFailure([&] { validate(dual, singleState); }, "Index decoration");
+}
+
 void validationTests() {
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
@@ -2814,6 +3041,7 @@ int main() {
         DepthClipTests();
         DepthStencilTests();
         ZExportTests();
+        unorm10_11_11TargetTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
         orderedPixelShaderTests();
@@ -2821,6 +3049,7 @@ int main() {
         DisabledColorTests();
         CompactedExportTests();
         ReversedComponentOrderTests();
+        DualSourceBlendTests();
         metadataPassTests();
         cmaskTests();
         ShaderStageTests();
