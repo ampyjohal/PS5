@@ -70,7 +70,7 @@ bool IndirectDrawsDisabled() {
 // nowhere) or a user-data register of the vertex-side stage banks (0x8c.. for the vertex / geometry
 // programs, 0x10c.. for the local / hull programs).
 bool drawLocation(std::uint32_t value) {
-    return value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
+    return value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
 }
 
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
@@ -697,9 +697,10 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
     indirect.count = multi ? packet[5] : 1;
     indirect.countIndirect = multi && (packet[4] & (1u << 30u)) != 0;
     indirect.countAddress = multi ? address(packet[6], packet[7]) : 0;
-    indirect.baseVertexLocation = packet[2];
-    indirect.startInstanceLocation = packet[3];
-    indirect.drawIndexLocation = multi ? packet[4] & 0xffffu : 0x280u;
+    const auto location = [](std::uint32_t value) { return value == 0 ? 0x280u : value; };
+    indirect.baseVertexLocation = location(packet[2]);
+    indirect.startInstanceLocation = location(packet[3]);
+    indirect.drawIndexLocation = multi ? location(packet[4] & 0xffffu) : 0x280u;
     indirect.drawIndexEnabled = multi && (packet[4] >> 31u) != 0;
     indirect.indxOffset = 0;
     require(indirect.count <= (std::numeric_limits<std::uint64_t>::max() - indirect.arguments - indirect.recordBytes) / indirect.stride, "indirect draw record range overflow");

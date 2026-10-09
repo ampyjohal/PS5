@@ -291,6 +291,12 @@ void testIndirectDraw() {
     check(draw.indirect->baseVertexLocation == 0x280 && draw.indirect->startInstanceLocation == 0x8e && draw.indirect->drawIndexLocation == 0x280 && !draw.indirect->drawIndexEnabled && draw.indirect->indxOffset == 5 && draw.firstVertex == 5 && !draw.indexed && draw.indexCount == 0 && draw.instanceCount == 0, "indirect draw locations mismatch");
     check(draw.indirect->RangeBytes() == 16 && draw.indirect->VertexDwordOffset() == 8 && draw.indirect->InstanceDwordOffset() == 12, "indirect draw record geometry mismatch");
     check(AgcDriver::Pm4::ResolveDraw(makePacket(0x24, {0x60, 0x280, 0x8e, 2}), state).indirect->arguments == 0x105d87fca0ull, "indirect draw offset not applied");
+    AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x8d, 0, 2}), 0);
+    const auto unused = AgcDriver::Pm4::ResolveDraw(makePacket(0x24, {0, 0x8d, 0, 2}), state);
+    check(unused.indirect->baseVertexLocation == 0x8d && unused.indirect->startInstanceLocation == 0x280, "an indirect draw location 0 did not mean no register");
+    const auto unusedMulti = AgcDriver::Pm4::ResolveDraw(makePacket(0x2c, {0x20, 0x8c, 0, 0, 3, 0, 0, 32, 0x22}), state);
+    check(unusedMulti.indirect->startInstanceLocation == 0x280 && unusedMulti.indirect->drawIndexLocation == 0x280, "a multi indirect draw location 0 did not mean no register");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x24, {0, 0x8d, 0x200, 2}), 0); }, "invalid indirect draw register location");
     const auto multi = AgcDriver::Pm4::ResolveDraw(makePacket(0x2c, {0x20, 0x8c, 0x280, 0x8d | (1u << 31u), 3, 0, 0, 32, 0x22}), state);
     check(multi.indirect->count == 3 && multi.indirect->stride == 32 && multi.indirect->drawIndexEnabled && multi.indirect->drawIndexLocation == 0x8d && !multi.indirect->countIndirect && multi.flags == 0x20 && multi.indirect->RangeBytes() == 80, "indirect multi-draw mismatch");
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x8c, 0x280, 0}), state); }, "index base");
