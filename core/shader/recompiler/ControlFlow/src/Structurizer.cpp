@@ -36,6 +36,13 @@ void addUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
     }
 }
 
+void addSortedUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
+    const auto position = std::lower_bound(values.begin(), values.end(), value);
+    if (position == values.end() || *position != value) {
+        values.insert(position, value);
+    }
+}
+
 bool contains(const std::vector<std::uint32_t>& values, std::uint32_t value) {
     return std::find(values.begin(), values.end(), value) != values.end();
 }
@@ -1334,8 +1341,7 @@ void Structurizer::computeDominatorTree(ControlFlowGraph& graph) const {
                 for (std::size_t i = 1; i < block.predecessors.size(); ++i) {
                     next = intersectSorted(next, graph.blocks[block.predecessors[i]].dominators);
                 }
-                addUnique(next, block.id);
-                sortUnique(next);
+                addSortedUnique(next, block.id);
             }
 
             if (next != block.dominators) {
@@ -1401,8 +1407,7 @@ void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
                 for (std::size_t i = 1; i < block.successors.size(); ++i) {
                     next = intersectSorted(next, graph.blocks[block.successors[i]].postDominators);
                 }
-                addUnique(next, block.id);
-                sortUnique(next);
+                addSortedUnique(next, block.id);
             }
 
             if (next != block.postDominators) {
