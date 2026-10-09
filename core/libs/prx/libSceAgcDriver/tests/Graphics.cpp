@@ -437,6 +437,11 @@ void NggVertexWorkgroupTests() {
     queue.userConfig[0x242] = 6;
     mesh = *AgcDriver::Graphics::DecodeState(queue, true).stages.mesh;
     Require(mesh.primitivesPerGroup == 126 && mesh.verticesPerGroup == 128 && mesh.maxPrimitives == 128, "the NGG vertex subgroup of a triangle strip is not bounded by its vertex budget");
+    queue.shader[0x8a] = 0x222c0005;
+    queue.shader[0x8b] = 0x400030;
+    Require(AgcDriver::Graphics::DecodeState(queue, true).stages.mesh.has_value(), "an NGG vertex program that loads only its vertex ID was rejected");
+    queue.shader[0x8a] = 0x222c0009;
+    queue.shader[0x8b] = 0x43001e;
     queue.context[0x1ff] = 2;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "invalid geometry subgroup output");
     queue.context[0x1ff] = 0x80;
