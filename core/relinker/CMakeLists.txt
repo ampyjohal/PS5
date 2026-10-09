@@ -131,6 +131,11 @@ if(BUILD_TESTING)
     target_include_directories(autorun_exit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include)
     add_test(NAME autorun_exit_status COMMAND autorun_exit_tests)
     set_tests_properties(autorun_exit_status PROPERTIES TIMEOUT 20)
+    add_test_executable(cli_args_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/CliArgsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp)
+    target_include_directories(cli_args_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include)
+    add_test(NAME cli_args COMMAND cli_args_tests)
     add_test_executable(buffer_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/BufferBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteReader.cpp
