@@ -240,9 +240,12 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
     PhaseTimer timer;
     try {
         const auto colorFormat = SampledTextureFormat(context, descriptor.format);
-        Require(!depthCompare || colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R16_UNORM, "comparison sampling requires an R32 float or R16 unorm depth texture");
+        const auto elementBytes = BytesPerElement(descriptor.format);
+        const bool isDepth32 = (colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R32_UINT || colorFormat == VK_FORMAT_R32_SINT || elementBytes == 4);
+        const bool isDepth16 = (colorFormat == VK_FORMAT_R16_UNORM || colorFormat == VK_FORMAT_R16_SFLOAT || colorFormat == VK_FORMAT_R16_UINT || colorFormat == VK_FORMAT_R16_SNORM || colorFormat == VK_FORMAT_R16_SINT || elementBytes == 2);
+        Require(!depthCompare || isDepth32 || isDepth16, "comparison sampling requires an R32 or R16 depth texture");
         Require(!depthCompare || descriptor.dimension != TextureDimension::k3D, "comparison sampling does not support 3D depth textures");
-        const auto vkFormat = depthCompare ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
+        const auto vkFormat = depthCompare ? (isDepth32 ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
         const VkImageAspectFlags aspect = depthCompare ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
@@ -251,7 +254,6 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto geometry = DescribeSurface(descriptor);
         const auto& mips = geometry.mips;
         const auto arrayLayers = geometry.layers;
-        const auto elementBytes = BytesPerElement(descriptor.format);
         APS5_LOG_OUT("Texture address=0x%llx %ux%u mips=%u layers=%u dim=%d tile=%d format=%u vk=%d element=%u", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, arrayLayers,
                      static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat), elementBytes);
         for (const auto& mip : mips) APS5_LOG_OUT("  mip %ux%u tiled=0x%llx+0x%llx linear=0x%llx+0x%llx blocksPerRow=%u pitch=%u tail=%d", mip.width, mip.height, static_cast<unsigned long long>(mip.tiledOffset), static_cast<unsigned long long>(mip.tiledSize), static_cast<unsigned long long>(mip.linearOffset), static_cast<unsigned long long>(mip.linearSize), mip.blocksPerRow, mip.pitchBytes, mip.tail ? 1 : 0);
