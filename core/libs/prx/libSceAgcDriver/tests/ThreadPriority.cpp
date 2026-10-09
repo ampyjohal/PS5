@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -46,10 +47,26 @@ void PlanTests() {
     Require(kept.refusal.empty() && !kept.limit.has_value(), "limits rtkit already accepts must be left alone");
 }
 
+// Run with APS5_THREAD_PRIORITY=rt or =high and no reachable rtkit: the raise must throw, not settle for less.
+void RefusalTest() {
+    bool threw = false;
+    try {
+        RaiseWorkerThreadPriority("test");
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        std::cout << "refused: " << error.what() << '\n';
+    }
+    Require(threw, "a refused priority request must throw");
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "refused") {
+            RefusalTest();
+            return 0;
+        }
         ParseTests();
         PlanTests();
     } catch (const std::exception& error) {

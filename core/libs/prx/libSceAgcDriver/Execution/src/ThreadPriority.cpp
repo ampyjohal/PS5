@@ -6,6 +6,7 @@
 #include <cstring>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 
@@ -253,31 +254,28 @@ void Raise(const char* role) {
     std::string failure;
     if (RequestedMode() == ThreadPriorityMode::Realtime) {
         const std::uint32_t priority = static_cast<std::uint32_t>(std::max(1, std::min(99, EnvInt("APS5_THREAD_RT", 10))));
-        if (PrepareRealtime(priority, role, failure) && RtkitCall("MakeThreadRealtimeWithPID", tid, DbusTypeUint32, &priority, failure)) {
-            const int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK;
-            LogOnce(role, std::string(policy == SCHED_FIFO ? "SCHED_FIFO " : "SCHED_RR ") + std::to_string(priority) + " via rtkit");
-            return;
+        if (!PrepareRealtime(priority, role, failure) || !RtkitCall("MakeThreadRealtimeWithPID", tid, DbusTypeUint32, &priority, failure)) {
+            throw std::runtime_error(std::string("APS5_THREAD_PRIORITY=rt: ") + role + " realtime refused: " + failure);
         }
-        LogOnce(role, "realtime refused (" + failure + "), trying a nice level");
+        const int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK;
+        LogOnce(role, std::string(policy == SCHED_FIFO ? "SCHED_FIFO " : "SCHED_RR ") + std::to_string(priority) + " via rtkit");
+        return;
     }
     const std::int32_t nice = static_cast<std::int32_t>(std::max(-20, std::min(19, EnvInt("APS5_THREAD_NICE", -10))));
-    if (RtkitCall("MakeThreadHighPriorityWithPID", tid, DbusTypeInt32, &nice, failure)) {
-        LogOnce(role, "nice " + std::to_string(nice) + " via rtkit");
-        return;
+    if (!RtkitCall("MakeThreadHighPriorityWithPID", tid, DbusTypeInt32, &nice, failure)) {
+        throw std::runtime_error(std::string("APS5_THREAD_PRIORITY=high: ") + role + " nice " + std::to_string(nice) + " refused: " + failure);
     }
-    if (setpriority(PRIO_PROCESS, static_cast<id_t>(tid), nice) == 0) {
-        LogOnce(role, "nice " + std::to_string(nice) + " (setpriority)");
-        return;
-    }
-    LogOnce(role, "not raised: " + failure + "; setpriority refused too (RLIMIT_NICE)");
+    LogOnce(role, "nice " + std::to_string(nice) + " via rtkit");
 }
 
 #else
 
 void Raise(const char* role) {
     const int priority = RequestedMode() == ThreadPriorityMode::Realtime ? THREAD_PRIORITY_TIME_CRITICAL : THREAD_PRIORITY_HIGHEST;
-    if (SetThreadPriority(GetCurrentThread(), priority)) LogOnce(role, priority == THREAD_PRIORITY_TIME_CRITICAL ? "time-critical" : "highest");
-    else LogOnce(role, "SetThreadPriority failed");
+    if (!SetThreadPriority(GetCurrentThread(), priority)) {
+        throw std::runtime_error(std::string("APS5_THREAD_PRIORITY: ") + role + " SetThreadPriority failed (error " + std::to_string(GetLastError()) + ")");
+    }
+    LogOnce(role, priority == THREAD_PRIORITY_TIME_CRITICAL ? "time-critical" : "highest");
 }
 
 #endif
