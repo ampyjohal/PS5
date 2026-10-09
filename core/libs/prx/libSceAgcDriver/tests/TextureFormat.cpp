@@ -77,6 +77,7 @@ void convertedDccClearTests() {
 void RunTextureFormatTests() {
     srgbDecodeTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
+    Require(ResolveTextureFormat(2) == VK_FORMAT_R8_SNORM, "format 2 must resolve to R8_SNORM");
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");
     Require(!IsBlockCompressed(1), "format 1 must not be block compressed");
     Require(BlockWidth(1) == 1u && BlockHeight(1) == 1u, "format 1 must have a one-texel block");
@@ -114,7 +115,7 @@ void RunTextureFormatTests() {
     reject([] { ResolveTextureFormat(0); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(183); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(9999); }, "unsupported guest texture format");
-    reject([] { BytesPerElement(2); }, "unsupported guest texture format");
+    reject([] { BytesPerElement(3); }, "unsupported guest texture format");
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     convertedDccClearTests();
 }
