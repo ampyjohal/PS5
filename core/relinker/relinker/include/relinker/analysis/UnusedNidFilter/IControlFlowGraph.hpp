@@ -3,6 +3,7 @@
 
 #include <relinker/domain/Types.hpp>
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
+#include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <unordered_set>
 #include <memory>
 #include <vector>
@@ -22,6 +23,15 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     VirtualAddress entryVaddr,
     const std::vector<VirtualAddress>& extraEntries,
     const IRelativeRelocationIndex& relativeRelocations
+);
+
+std::unique_ptr<IControlFlowGraph> BuildAddressTakenControlFlowGraph(
+    const std::vector<std::uint8_t>& text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    const std::vector<StrictDataRegion>& data
 );
 
 }
