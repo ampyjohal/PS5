@@ -110,6 +110,14 @@ int main() {
                 return 1;
             }
         }
+        auto sharedDiscard = makeGraph({{5, 1}, {4, 2}, {7, 3}, {7, 4}, {5}, {7, 6}, {}, {}});
+        const std::vector<std::uint32_t> sharedDiscardWords{444, 1944, 68, 1128, 8, 2084, 148, 28};
+        for (auto& block : sharedDiscard.blocks) {
+            std::sort(block.successors.begin(), block.successors.end());
+            block.estimatedSpirvWords = sharedDiscardWords[block.id];
+        }
+        Structurizer{}.Structurize(sharedDiscard);
+        requireStructuredBranches(sharedDiscard, "early discards that share one ending block");
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
