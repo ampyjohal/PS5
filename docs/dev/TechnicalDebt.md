@@ -2,7 +2,6 @@
 
 ### Build
 
-- [TLS integration tests](../../core/relinker/relinker/tests/test_tls_function_coverage.py) are grouped to bound each CTest entry's workload. The cause of earlier intermittent hosted CI delays remains unknown; grouping is a scheduling mitigation, not a root-cause fix. The intermittent `Cannot write diagnostic fixture` failure in `windows_dependency_diagnostics` also reproduces on unchanged main; a common cause has not been established.
 - Building on Windows requires a specific version of mingw - MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`)
 - Even compiled prx libraries on Windows require nearby (static linking of these dependencies causes conflicts):
   - libgcc_s_seh-1.dll
