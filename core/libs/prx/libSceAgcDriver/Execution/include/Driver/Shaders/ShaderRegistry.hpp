@@ -72,6 +72,7 @@ struct ShaderSnapshot {
 std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address);
 std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address);
 bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset);
+bool VertexWorkgroupRequired(const QueueState& queue, const ShaderRegistry& registry);
 
 std::uint64_t NullPixelProgramAddress();
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);

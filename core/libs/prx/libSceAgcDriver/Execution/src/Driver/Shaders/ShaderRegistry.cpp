@@ -111,6 +111,22 @@ bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset
 }
 
 
+bool VertexWorkgroupRequired(const QueueState& queue, const ShaderRegistry& registry) {
+    Graphics::NoteRegisterRead(Graphics::RegisterBank::Context, 0x2d5);
+    const auto routing = queue.context.find(0x2d5);
+    if (routing == queue.context.end() || (routing->second & 0x02002024u) != 0x2000u) return false;
+    Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, 0xc8);
+    Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, 0xc9);
+    const auto low = queue.shader.find(0xc8);
+    const auto high = queue.shader.find(0xc9);
+    if (low == queue.shader.end() || high == queue.shader.end()) return false;
+    require((high->second & ~0xffu) == 0, "reserved graphics program address bits are set");
+    const auto address = (static_cast<std::uint64_t>(low->second) << 8u) | (static_cast<std::uint64_t>(high->second) << 40u);
+    const auto snapshot = ProgramSnapshot(registry, address);
+    require((address - snapshot->codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
+    return (snapshot->header.empty() || snapshot->type == 2) && ProgramUsesWorkgroup(*snapshot, (address - snapshot->codeAddress) / sizeof(std::uint32_t));
+}
+
 struct ShaderPreparationTransaction::State {
     struct Change {
         std::shared_ptr<PreparedShaders> destination;
@@ -375,6 +391,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
         wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
+        if (registration && stage == Stage::Vertex && (routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) return {};
         if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0) {
             if (registration) return {};
             auto stageState = state;
@@ -512,7 +529,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
         return;
     }
     DrawDecode decoded{};
-    decoded.state.stages = Graphics::DecodeShaderStages(state);
+    decoded.state.stages = Graphics::DecodeShaderStages(state, VertexWorkgroupRequired(state, *registry));
     DecodeGraphicsPrograms(decoded, state, *registry, true, false);
     auto prepared = PrepareGraphicsStages(decoded, localDevice->Target());
     for (auto& stage : prepared) {
