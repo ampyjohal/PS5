@@ -147,6 +147,7 @@ struct Context {
     bool imageViewMinLod = false;
     bool pipelineExecutableInfo = false;
     std::uint32_t srgbDecodeFormats = 0;
+    VkSampleCountFlags sampleLocationSampleCounts = 0;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {
