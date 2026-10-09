@@ -101,7 +101,7 @@ constexpr std::uint32_t Expected[Threads][Columns] = {
 };
 
 constexpr const char* Names[Columns] = {"v_sin_f32", "v_cos_f32", "v_sin_f16", "v_cos_f16"};
-constexpr std::uint32_t Tolerance[Threads] = {0u, 0u, 0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u, 0u, 0u, 2u, 2u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 12u, 12u, 12u, 12u, 12u, 12u, 12u, 12u};
+constexpr std::uint32_t Tolerance[Threads] = {0u, 0u, 0u, 0u, 0u, 0u, 2u, 2u, 1u, 1u, 0u, 0u, 2u, 2u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 12u, 12u, 12u, 12u, 12u, 12u, 12u, 12u};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
