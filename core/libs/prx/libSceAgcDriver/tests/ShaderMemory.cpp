@@ -2130,6 +2130,17 @@ void verifyGuardedNullPointers() {
 #endif
 }
 
+void verifyCubeDepthCompareMode() {
+    using namespace ShaderRecompiler;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    image.depthCompare = true;
+    const DescriptorValue descriptor{{0x02143930u, 0x08200000u, 0u, 0xb0500facu, 5u, 0x00700000u, 0u, 0u}, 8u};
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes));
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
@@ -2164,6 +2175,7 @@ int main(int argc, char** argv) {
         verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
         verifyGuardedNullPointers();
+        verifyCubeDepthCompareMode();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
             0x07230203u, 0x00010000u, 0u, 5u, 0u,
