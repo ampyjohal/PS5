@@ -149,11 +149,15 @@ bool BdaByteReadsForced() {
     return forced;
 }
 
+std::uint32_t BdaInstructionPc(SpirvEmitterState& state, const IrValue& inst) {
+    return state.bdaPcOverride != 0u ? state.bdaPcOverride : ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+}
+
 std::uint32_t AddBdaAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, bool subtract) {
     auto& state = ctx.state;
     const auto result = Binary(state, subtract ? spv::OpISub : spv::OpIAdd, TypeScalarU64(state), address, offset);
     const auto overflow = subtract ? Binary(state, spv::OpUGreaterThan, TypeBool(state), offset, address) : Binary(state, spv::OpULessThan, TypeBool(state), result, address);
-    EmitIfCondition(state, overflow, [&] { RecordBdaFault(state, address, ConstantU32(state, 0u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Overflow); });
+    EmitIfCondition(state, overflow, [&] { RecordBdaFault(state, address, ConstantU32(state, 0u), BdaInstructionPc(state, inst), BdaAbi::FaultReason::Overflow); });
     StopBdaInvocationIf(state, overflow);
     return result;
 }
@@ -192,7 +196,7 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA read width");
     if (state.bdaPointerFunction == 0) ctx.Fail(inst, "BDA lookup function is missing");
     if (bits == 32u) return EmitBdaDwordReads(ctx, inst, address, 0u, 1u)[0];
-    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto instruction = BdaInstructionPc(state, inst);
     EmitBdaOverflowCheck(state, address, bits / 8u, instruction);
     return EmitBdaBytes(state, address, bits / 8u, instruction, BdaAccessMask(state, inst));
 }
@@ -200,7 +204,7 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
     auto& state = ctx.state;
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
-    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto instruction = BdaInstructionPc(state, inst);
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA write width");
     if (bits != 32u) {
         EmitBdaOverflowCheck(state, address, bits / 8u, instruction);
@@ -230,7 +234,7 @@ void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     auto& state = ctx.state;
     if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA store width");
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
-    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto instruction = BdaInstructionPc(state, inst);
     const auto accessMask = BdaAccessMask(state, inst);
     const auto storeBytes = [&] {
         const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
@@ -256,7 +260,7 @@ std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std
     auto& state = ctx.state;
     if (bytes != 4u && bytes != 8u) ctx.Fail(inst, "unsupported BDA atomic width");
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
-    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto instruction = BdaInstructionPc(state, inst);
     const auto type = bytes == 8u ? TypeScalarU64(state) : TypeU32(state);
     const auto zero = bytes == 8u ? BdaConstant(state, 0u) : ConstantU32(state, 0u);
     const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), address, BdaConstant(state, bytes - 1u)), BdaConstant(state, 0u));
@@ -286,7 +290,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
     if (dwords == 0u || dwords > 4u) ctx.Fail(inst, "unsupported BDA read width");
     if (state.bdaPointerFunction == 0) ctx.Fail(inst, "BDA lookup function is missing");
     const auto u64 = TypeScalarU64(state);
-    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto instruction = BdaInstructionPc(state, inst);
     const auto used = everyDword ? (1u << dwords) - 1u : UsedBdaDwords(inst, dwords);
     const auto isUsed = [&](std::uint32_t dword) { return (used & (1u << dword)) != 0u; };
     std::array<std::uint32_t, 4> values{};
