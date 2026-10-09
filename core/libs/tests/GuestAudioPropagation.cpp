@@ -118,6 +118,12 @@ int main() {
     AudioPropagationHandle path = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceGetAudioPath(source, 0, &path); }, "audio path without paths");
 
+    alignas(16) std::uint8_t pathData[0xe0];
+    std::memset(pathData, 0xa5, sizeof(pathData));
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceSetAudioPath(path, pathData, 1.0f); }, "unsupported individual audio path");
+    for (const auto byte : pathData) Require(byte == 0xa5, "unsupported path update wrote caller memory");
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceSetAudioPath(path, nullptr, 1.0f); }, "unsupported null individual audio path");
+
     std::uint8_t rays[AudioPropagation::RaySize * 2]{};
     count = 7;
     Require(sceAudioPropagationSystemGetRays(system, rays, &count) == 0 && count == 0, "system requested rays");
