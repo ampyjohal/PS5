@@ -30,7 +30,7 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
     }
 }
 
-bool Driver::relieveMemory(std::uint64_t failures, const std::exception& error, bool throttled) {
+bool Driver::relieveMemory(std::uint64_t failures, const std::exception& error) {
     if (Graphics::OutOfMemoryFailures() == failures || GuestMemory::GpuMutex().HeldByThisThread()) return false;
     const std::string_view what = error.what();
     const auto result = what.rfind("Vulkan result -");
@@ -42,23 +42,22 @@ bool Driver::relieveMemory(std::uint64_t failures, const std::exception& error, 
     if (relief == nullptr) return false;
     static std::atomic<std::int64_t> lastRelief{0};
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (throttled && now - lastRelief.load(std::memory_order_relaxed) < 1000) return false;
+    if (now - lastRelief.load(std::memory_order_relaxed) < 1000) return false;
     lastRelief.store(now, std::memory_order_relaxed);
     const auto freed = relief->RelieveMemory();
-    std::fprintf(stderr, "[gpumem] %s; freed %.0f MiB%s\n", error.what(), freed / 1048576.0, throttled ? "" : ", trying the packet once more");
+    std::fprintf(stderr, "[gpumem] %s; freed %.0f MiB\n", error.what(), freed / 1048576.0);
     return true;
 }
 
 template <typename TWork>
-void Driver::retryOutOfMemory(TWork&& work) {
+void Driver::relievingMemory(TWork&& work) {
     const auto failures = Graphics::OutOfMemoryFailures();
     try {
         work();
-        return;
     } catch (const std::exception& error) {
-        if (!relieveMemory(failures, error, false)) throw;
+        relieveMemory(failures, error);
+        throw;
     }
-    work();
 }
 
 void Driver::execute(const Submission& submission) {
@@ -245,11 +244,11 @@ void Driver::execute(const Submission& submission) {
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15) {
-            timed(&WorkerProfile::dispatchMs, [&] { retryOutOfMemory([&] { dispatch(queue, packet, submission); }); });
+            timed(&WorkerProfile::dispatchMs, [&] { relievingMemory([&] { dispatch(queue, packet, submission); }); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(false);
         } else if (opcode == 0x16) {
-            timed(&WorkerProfile::dispatchMs, [&] { retryOutOfMemory([&] { dispatchIndirect(queue, packet, submission); }); });
+            timed(&WorkerProfile::dispatchMs, [&] { relievingMemory([&] { dispatchIndirect(queue, packet, submission); }); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(true);
         } else if (opcode == 0x3c || opcode == 0x93) {
@@ -296,7 +295,7 @@ void Driver::execute(const Submission& submission) {
                 } catch (const std::exception& error) {
                     CaptureTrace::Log("draw-error submission=%llu offset=%zu reason=%.256s", static_cast<unsigned long long>(submission.serial), cursor, error.what());
                     countSkip(Graphics::DrawSkip::Thrown);
-                    relieveMemory(failures, error, true);
+                    relieveMemory(failures, error);
                     throw;
                 }
             });

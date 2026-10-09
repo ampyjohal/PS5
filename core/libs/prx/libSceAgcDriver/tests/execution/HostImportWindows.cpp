@@ -26,7 +26,6 @@ namespace Graphics = AgcDriver::Graphics;
 using Graphics::Require;
 
 constexpr std::uint64_t MiB = 1ull << 20u;
-// The default window (APS5_HOST_IMPORT_WINDOW_MIB): a range of two windows is imported one window at a time.
 constexpr std::uint64_t WindowBytes = 64 * MiB;
 constexpr std::uint64_t BlockBytes = 2 * WindowBytes;
 constexpr std::uint64_t OtherBytes = 64 * 1024;
@@ -39,7 +38,6 @@ std::string Hex(std::uint64_t value) {
     return text;
 }
 
-// Guest memory registered the way the guest's allocations are: readable and writable.
 class GuestBlock {
 public:
     explicit GuestBlock(std::uint64_t size) : bytes(size) {
@@ -75,10 +73,6 @@ private:
 
 enum class Outcome : std::uint8_t { NoDevice, NoImport, Passed };
 
-// The device's own context is private, so the imports are reached through FillBuffer, which looks them up with
-// the device's context as a guest fill does. They are checked through a probe context that needs only the device
-// handle and a nonzero alignment: HostImportCovers and HostImportSerial without `reconcile` never retire or make
-// an import (retiring one needs the function table of the context that made it).
 Graphics::Context Probe(const AgcDriver::VulkanDevice& device) {
     Graphics::Context probe{};
     probe.device = device.Device();
@@ -86,7 +80,6 @@ Graphics::Context Probe(const AgcDriver::VulkanDevice& device) {
     return probe;
 }
 
-// Fills `ProbeBytes` at `address` with the pattern under the GPU lock, then drains the device, as a guest fill does.
 bool Fill(AgcDriver::VulkanDevice& device, std::uint64_t address) {
     const std::array<std::uint32_t, 4> pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -95,8 +88,6 @@ bool Fill(AgcDriver::VulkanDevice& device, std::uint64_t address) {
     return filled;
 }
 
-// The device's teardown (ClearHostImports) gives back the GPU memory its imports counted. Runs before the window
-// scenario, which leaves its own imports in the table.
 Outcome ClearingDropsImports() {
     GuestBlock guest(BlockBytes);
     auto device = OpenVulkanTestDevice();
@@ -111,9 +102,6 @@ Outcome ClearingDropsImports() {
     return Outcome::Passed;
 }
 
-// A range bigger than a window is imported as the window holding the address used, so one large heap does not take
-// the import budget. The window stays while an unrelated registration changes the registry (its range still owns
-// it), and the same memory mapped again (a new Range object at the same address) retires it.
 Outcome WindowsFollowTheirRange() {
     GuestBlock guest(BlockBytes);
     auto device = OpenVulkanTestDevice();

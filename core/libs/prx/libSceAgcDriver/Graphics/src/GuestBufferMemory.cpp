@@ -335,9 +335,6 @@ void decideImportWatch(const Context& context, HostImports& state) {
 #endif
 }
 
-// The registered range containing [begin, end), whatever its protection, or null. Registered ranges do not
-// overlap (containingRange relies on it too), so the last range starting at or before `begin` is the only
-// candidate. For a whole-range import this is the range at its base, as before windows.
 std::shared_ptr<const GuestAllocations::Range> leasedRangeOwner(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end) {
     const auto found = std::upper_bound(lease.begin(), lease.end(), begin, [](std::uint64_t value, const auto& range) { return value < range->address; });
     if (found == lease.begin()) return nullptr;
@@ -345,9 +342,6 @@ std::shared_ptr<const GuestAllocations::Range> leasedRangeOwner(const GuestAlloc
     return begin >= range->address && end <= range->address + range->bytes ? range : nullptr;
 }
 
-// An import is reused, and kept by a refresh, only while the range containing it is the Range object it was
-// made from: a range mapped again is a new object, so the weak pointer no longer matches. A window import
-// lies inside its range rather than at its address, hence the containment lookup.
 bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease) {
     const auto current = leasedRangeOwner(lease, entry.base, entry.base + entry.bytes);
     return current != nullptr && !entry.range.owner_before(current) && !current.owner_before(entry.range);
@@ -420,9 +414,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     const auto alignment = context.hostImportAlignment;
     if (alignment == 0 || base % alignment != 0 || bytes % alignment != 0 || state.failed.contains(base)) return nullptr;
-    // The import must lie in one registered range. A request always does (a range, or a window of one), and a
-    // merge with an overlapped import keeps to that range, since sameRange holds every import to its range;
-    // an import that no range owns is refused, so the caller copies.
     const auto owner = leasedRangeOwner(lease, base, base + bytes);
     if (owner == nullptr) return nullptr;
     const auto budget = importBudget(context, state);
@@ -442,7 +433,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     HostImport entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
     entry.range = owner;
-    bool imageMemory = false;
 #ifdef _WIN32
     // Drivers pin imported pages, so every page must be committed and accessible.
     bool writable = true;
@@ -460,7 +450,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         if (!pageReadOnly) readOnly = false;
         if (info.Type != MEM_MAPPED && !pageWritable && !pageReadOnly && refused.BaseAddress == nullptr) refused = info;
         if (!pageWritable) writable = false;
-        if (info.Type == MEM_IMAGE) imageMemory = true;
         cursor = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
     }
     if (!writable && readOnly) {
@@ -491,17 +480,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         });
     };
     create();
-    const bool outOfMemory = step != nullptr && std::strcmp(step, "vkAllocateMemory") == 0 && (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY);
-    if (outOfMemory && !imageMemory) {
-        constexpr std::uint64_t evictForBytes = 16ull << 20u;
-        std::uint64_t freed = 0;
-        if (bytes >= evictForBytes) {
-            if (context.bufferPool != nullptr) freed += context.bufferPool->Trim();
-            freed += retireLeastRecent(context, state, lease, bytes);
-        }
-        if (freed != 0) create();
-    }
-    // A dma-buf import keeps its own write-watch decision (unwatchDmaBufImports), so it is taken per import kind.
     entry.unwatched = step == nullptr && (entry.dmaBuf ? state.unwatchDmaBufImports : state.unwatchImports);
     if (entry.unwatched) GuestMemory::Unwatch(base, bytes);
     if (step != nullptr) {
@@ -1238,7 +1216,6 @@ void ClearHostImports(VkDevice device) {
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
-        // destroyImport would count this, but the objects are destroyed here without it, so the count drops here.
         CountGpuMemory(GpuMemoryKind::HostImport, -static_cast<std::int64_t>(entry.bytes));
     }
     state.imports.clear();

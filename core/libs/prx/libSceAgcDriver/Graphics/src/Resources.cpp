@@ -78,8 +78,6 @@ std::uint64_t OutOfMemoryFailures() {
 VkResult AllocateGpuMemory(const Context& context, const VkMemoryAllocateInfo& allocation, VkDeviceMemory& memory, GpuMemoryKind kind, const char* what) {
     const auto allocate = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
     auto result = allocate(context.device, &allocation, nullptr, &memory);
-    VkDeviceSize trimmed = 0;
-    if (outOfMemory(result) && context.bufferPool != nullptr && (trimmed = context.bufferPool->Trim()) != 0) result = allocate(context.device, &allocation, nullptr, &memory);
     if (result == VK_SUCCESS) {
         CountGpuMemory(kind, static_cast<std::int64_t>(allocation.allocationSize));
         return result;
@@ -96,7 +94,7 @@ VkResult AllocateGpuMemory(const Context& context, const VkMemoryAllocateInfo& a
     const auto* recorder = GuestMemory::GpuMutex().HeldByThisThread() ? Recorder::Active() : nullptr;
     char batches[48] = "";
     if (recorder != nullptr) std::snprintf(batches, sizeof(batches), ", %zu batches in flight", recorder->InFlightBatches());
-    std::fprintf(stderr, "[gpumem] vkAllocateMemory %s of %.1f MiB failed (%d, failure %llu): memory type %u (flags 0x%x) in heap %u (%.0f MiB, flags 0x%x); pool emptied %.0f MiB first; live: %s of %u allowed; pool retains %.0f MiB host, %.0f MiB device; host import limit %.0f MiB%s\n", what, allocation.allocationSize / 1048576.0, static_cast<int>(result), static_cast<unsigned long long>(failure), allocation.memoryTypeIndex, type.propertyFlags, type.heapIndex, heap.size / 1048576.0, heap.flags, trimmed / 1048576.0, describeGpuMemory().c_str(), context.limits.maxMemoryAllocationCount, pool.first / 1048576.0, pool.second / 1048576.0, HostImportLimit() / 1048576.0, batches);
+    std::fprintf(stderr, "[gpumem] vkAllocateMemory %s of %.1f MiB failed (%d, failure %llu): memory type %u (flags 0x%x) in heap %u (%.0f MiB, flags 0x%x); live: %s of %u allowed; pool retains %.0f MiB host, %.0f MiB device; host import limit %.0f MiB%s\n", what, allocation.allocationSize / 1048576.0, static_cast<int>(result), static_cast<unsigned long long>(failure), allocation.memoryTypeIndex, type.propertyFlags, type.heapIndex, heap.size / 1048576.0, heap.flags, describeGpuMemory().c_str(), context.limits.maxMemoryAllocationCount, pool.first / 1048576.0, pool.second / 1048576.0, HostImportLimit() / 1048576.0, batches);
     return result;
 }
 
