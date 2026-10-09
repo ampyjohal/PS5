@@ -221,6 +221,9 @@ private:
     static void timed(double WorkerProfile::*bucket, TWork&& work);
     FrameTiming* frameTiming();
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
+    bool relieveMemory(std::uint64_t failures, const std::exception& error, bool throttled);
+    template <typename TWork>
+    void retryOutOfMemory(TWork&& work);
     void execute(const Submission& submission);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <functional>
 #include <shared_mutex>
+#include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
@@ -27,6 +28,37 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
         profile.reported = end;
         AgcDriver::ProfilePrint_nid_no_patch( "[gpu] worker at %.0f s: dispatch %.1f s, draw %.1f s, wait %.1f s\n", std::chrono::duration<double>(end - profile.start).count(), profile.dispatchMs / 1000, profile.drawMs / 1000, profile.waitMs / 1000);
     }
+}
+
+bool Driver::relieveMemory(std::uint64_t failures, const std::exception& error, bool throttled) {
+    if (Graphics::OutOfMemoryFailures() == failures || GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    const std::string_view what = error.what();
+    const auto result = what.rfind("Vulkan result -");
+    if (result == std::string_view::npos) return false;
+    const auto code = what.substr(result + 14, 3);
+    if (code.substr(0, 2) != "-1" && code.substr(0, 2) != "-2") return false;
+    if (code.size() > 2 && code[2] >= '0' && code[2] <= '9') return false;
+    const auto relief = device.Load();
+    if (relief == nullptr) return false;
+    static std::atomic<std::int64_t> lastRelief{0};
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (throttled && now - lastRelief.load(std::memory_order_relaxed) < 1000) return false;
+    lastRelief.store(now, std::memory_order_relaxed);
+    const auto freed = relief->RelieveMemory();
+    std::fprintf(stderr, "[gpumem] %s; freed %.0f MiB%s\n", error.what(), freed / 1048576.0, throttled ? "" : ", trying the packet once more");
+    return true;
+}
+
+template <typename TWork>
+void Driver::retryOutOfMemory(TWork&& work) {
+    const auto failures = Graphics::OutOfMemoryFailures();
+    try {
+        work();
+        return;
+    } catch (const std::exception& error) {
+        if (!relieveMemory(failures, error, false)) throw;
+    }
+    work();
 }
 
 void Driver::execute(const Submission& submission) {
@@ -213,11 +245,11 @@ void Driver::execute(const Submission& submission) {
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15) {
-            timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
+            timed(&WorkerProfile::dispatchMs, [&] { retryOutOfMemory([&] { dispatch(queue, packet, submission); }); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(false);
         } else if (opcode == 0x16) {
-            timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
+            timed(&WorkerProfile::dispatchMs, [&] { retryOutOfMemory([&] { dispatchIndirect(queue, packet, submission); }); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(true);
         } else if (opcode == 0x3c || opcode == 0x93) {
@@ -247,6 +279,7 @@ void Driver::execute(const Submission& submission) {
                     if (profileDraws) Graphics::CountDrawSkip(kind, std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count());
                 };
 
+                const auto failures = Graphics::OutOfMemoryFailures();
                 try {
                     std::string rejected;
                     const auto verdict = draw(queue, packet, submission, rejected);
@@ -263,6 +296,7 @@ void Driver::execute(const Submission& submission) {
                 } catch (const std::exception& error) {
                     CaptureTrace::Log("draw-error submission=%llu offset=%zu reason=%.256s", static_cast<unsigned long long>(submission.serial), cursor, error.what());
                     countSkip(Graphics::DrawSkip::Thrown);
+                    relieveMemory(failures, error, true);
                     throw;
                 }
             });

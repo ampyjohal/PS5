@@ -15,6 +15,8 @@ namespace AgcDriver::Graphics {
 Recorder* Recorder::Active() { return nullptr; }
 void Recorder::Submit() { Require(false, "the device tests have no recorder"); }
 bool Recorder::Reap() { Require(false, "the device tests have no recorder"); return false; }
+// Resources.cpp reports the host import limit in its out-of-memory line; these tests import no guest memory.
+std::uint64_t HostImportLimit() { return 0; }
 }
 
 namespace {
