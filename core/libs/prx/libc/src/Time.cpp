@@ -9,6 +9,20 @@
 
 #include "prx/libc/include/General.hpp"
 
+#ifdef __linux__
+#include <cstdlib>
+
+namespace {
+
+const bool timeZoneFixed = [] {
+    if (std::getenv("TZ") == nullptr) ::setenv("TZ", ":/etc/localtime", 0);
+    ::tzset();
+    return true;
+}();
+
+}  // namespace
+#endif
+
 extern "C" {
 
 std::tm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, std::tm* result);
