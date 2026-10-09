@@ -27,7 +27,7 @@ Windows output:
 relinker --windows source/input.elf app.exe
 ```
 
-Add `--to-intel` for Intel hosts. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
+Add `--to-intel` for Intel hosts, or `--to-rosetta` for Rosetta. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
 
 ## Options
 
@@ -39,6 +39,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--windows-diagnostics`       | Include startup dependency diagnostics. Requires `--windows`.                                                                                                                                                                                                                                                           |
 | `--windows-gui`               | Select the Windows GUI subsystem instead of the console subsystem. Requires `--windows`.                                                                                                                                                                                                                                |
 | `--to-intel`                  | Convert supported AMD-only instructions in the executable and bundled modules. Unsupported instructions or unreachable conversion stubs cause an error.                                                                                                                                                                 |
+| `--to-rosetta`                | Convert as `--to-intel` does and also lower what Rosetta lacks: RDSEED becomes RDRAND, CLWB a NOP, and RDPID returns processor 0. Implies `--to-intel`. Conflicts with `--windows`.                                                                                                                                     |
 | `unused-filter=0`             | Keep all imported NID references.                                                                                                                                                                                                                                                                                       |
 | `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis; preserve PLT imports.                                                                                                                                                                                                                         |
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                     |

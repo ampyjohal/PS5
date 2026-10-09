@@ -49,7 +49,7 @@ int main(const int argc, char* argv[]) {
         std::vector<Codegen::TrampolineSite> trampolines;
         if (args.toIntel) {
             const auto codeSegments = Relinker::ElfReader(sourceBytes).ReadCodeSegments();
-            auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(std::move(sourceBytes), codeSegments);
+            auto converted = Codegen::MakeAmd64OnlyConverter(args.toRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel)->Convert(std::move(sourceBytes), codeSegments);
             sourceBytes = std::move(converted.Bytes);
             trampolines = std::move(converted.Trampolines);
             std::map<std::string, std::size_t> stubsByName;
@@ -91,7 +91,7 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, args.toRosetta, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
         }
 
         if (args.writeRegistry) {

@@ -21,6 +21,9 @@ Args ParseArgs(int argc, char* argv[]) {
             args.excludedSceModules.insert(argv[++i]);
         } else if (arg == "--to-intel") {
             args.toIntel = true;
+        } else if (arg == "--to-rosetta") {
+            args.toRosetta = true;
+            args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
             const std::string value = arg.substr(14);
             if (unusedFilterSpecified || value.size() != 1 || value[0] < '0' || value[0] > '2')
@@ -57,6 +60,9 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
+    if (args.toRosetta && args.toWindows)
+        throw std::runtime_error("--to-rosetta conflicts with --windows");
+
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 
@@ -65,7 +71,7 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 
