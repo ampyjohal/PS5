@@ -553,11 +553,9 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
         const auto borderType = (words[3] >> 30u) & 0x3u;
         const bool border = addressX == EmulatedCompare::AddressBorder || addressY == EmulatedCompare::AddressBorder;
         if (border && borderType == 3u) throw std::runtime_error("comparison sampling of a color texture with a border color table is not implemented");
-        const bool magLinear = magFilter == 1u || magFilter == 3u;
-        const bool minLinear = minFilter == 1u || minFilter == 3u;
-        if (magLinear != minLinear || (magFilter != 0u && !magLinear && magFilter != 2u) || (minFilter != 0u && !minLinear && minFilter != 2u)) throw std::runtime_error("comparison sampling of a color texture is implemented only with equal point or bilinear minification and magnification filters");
+        if (magFilter != minFilter || magFilter > 1u) throw std::runtime_error("comparison sampling of a color texture is implemented only with equal point or bilinear minification and magnification filters");
         if (unnormalized) throw std::runtime_error("comparison sampling of a color texture does not implement unnormalized coordinates");
-        const auto state = EmulatedCompare::Enabled | (function << EmulatedCompare::FunctionShift) | (magLinear ? EmulatedCompare::Linear : 0u)
+        const auto state = EmulatedCompare::Enabled | (function << EmulatedCompare::FunctionShift) | (magFilter == 1u ? EmulatedCompare::Linear : 0u)
             | (addressX << EmulatedCompare::ClampXShift) | (addressY << EmulatedCompare::ClampYShift) | (border && borderType == 2u ? EmulatedCompare::BorderWhite : 0u);
         if (samplerState.has_value() && *samplerState != state) throw std::runtime_error("comparison sampling of a color texture through samplers that disagree is not implemented");
         samplerState = state;

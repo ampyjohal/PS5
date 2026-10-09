@@ -2138,7 +2138,8 @@ void verifyCubeDepthCompareMode() {
     image.depthCompare = true;
     const DescriptorValue descriptor{{0x02143930u, 0x08200000u, 0u, 0xb0500facu, 5u, 0x00700000u, 0u, 0u}, 8u};
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
-    static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes));
+    const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+    require(modes[selected].cube && (modes[selected].emulatedCompare & EmulatedCompare::Enabled) != 0u, "cube color comparison did not select its emulated runtime mode");
 }
 
 int main(int argc, char** argv) {
