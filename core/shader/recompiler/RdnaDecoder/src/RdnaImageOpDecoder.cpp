@@ -162,7 +162,7 @@ const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
             return entry;
         }
     }
-    throw std::runtime_error("unsupported MIMG opcode");
+    throw UnsupportedInstructionError("unsupported MIMG opcode " + std::to_string(opcode));
 }
 
 void validateFlags(std::uint32_t flags) {
