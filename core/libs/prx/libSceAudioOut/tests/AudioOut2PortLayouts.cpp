@@ -48,6 +48,8 @@ namespace {
 constexpr std::uint32_t grain = 256;
 constexpr std::uint32_t frequency = 48000;
 constexpr std::uint16_t portTypeMain = 0;
+constexpr std::uint16_t portTypePadSpeaker = 0x3;
+constexpr std::uint16_t portTypePadVibration = 0x6;
 constexpr std::uint32_t attributeData = 0;
 constexpr std::uint32_t attributeVolume = 1;
 constexpr std::uint32_t formatFloat = 0;
@@ -85,9 +87,9 @@ AudioOut2ContextHandle CreateContext() {
     return context;
 }
 
-int CreatePort(AudioOut2ContextHandle context, std::uint32_t format, AudioOut2PortHandle* port) {
+int CreatePort(AudioOut2ContextHandle context, std::uint32_t format, AudioOut2PortHandle* port, std::uint16_t type = portTypeMain) {
     AudioOut2PortParam params{};
-    params.port_type = portTypeMain;
+    params.port_type = type;
     params.data_format = format;
     params.sampling_freq = frequency;
     return sceAudioOut2PortCreate(context, &params, port);
@@ -103,20 +105,31 @@ void SetVolume(AudioOut2PortHandle port, const std::vector<float>& volume) {
     Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
 }
 
-std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
+struct PortData {
+    std::uint16_t type;
+    std::uint32_t format;
+    const void* data;
+    std::vector<float> volume;
+};
+
+std::vector<float> Play(const std::vector<PortData>& inputs) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     const auto context = CreateContext();
-    AudioOut2PortHandle port = 0;
-    Require(CreatePort(context, format, &port) == 0);
-    SetVolume(port, volume);
-    SetData(port, data);
+    std::vector<AudioOut2PortHandle> ports;
+    for (const auto& input : inputs) {
+        AudioOut2PortHandle port = 0;
+        Require(CreatePort(context, input.format, &port, input.type) == 0);
+        SetVolume(port, input.volume);
+        SetData(port, input.data);
+        ports.push_back(port);
+    }
     Require(sceAudioOut2ContextPush(context, 1) == 0);
-    SetData(port, nullptr);
+    for (const auto port : ports) SetData(port, nullptr);
     for (std::uint32_t push = 0; push < silentGrains; push++) Require(sceAudioOut2ContextPush(context, 1) == 0);
-    Require(sceAudioOut2PortDestroy(port) == 0);
+    for (const auto port : ports) Require(sceAudioOut2PortDestroy(port) == 0);
     Require(sceAudioOut2ContextDestroy(context) == 0);
 
     std::ifstream file(path, std::ios::binary);
@@ -131,6 +144,10 @@ std::vector<float> Play(std::uint32_t format, const void* data, const std::vecto
     while (first < last && samples[first] == 0.0f) first++;
     while (last > first && samples[last - 1] == 0.0f) last--;
     return {samples + first, samples + last};
+}
+
+std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
+    return Play({{portTypeMain, format, data, volume}});
 }
 
 float Sample(std::uint32_t channel, std::uint32_t frame) {
@@ -216,6 +233,18 @@ void TestDroppedLfe() {
     RequireFold(Play(Format(surround714.channels, formatFloat), data.data(), volume), surround714, expected, volume, 1.0f);
 }
 
+void TestPadPortsWithoutPadDevice() {
+    const auto speaker = FloatGrain(mono.channels);
+    std::vector<float> vibration(static_cast<std::size_t>(grain) * stereo.channels, 0.75f);
+    const std::vector<float> unity{1.0f, 1.0f};
+    const auto played = Play({
+        {portTypePadVibration, Format(stereo.channels, formatFloat), vibration.data(), unity},
+        {portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}},
+    });
+    RequireFold(played, mono, speaker, {1.0f}, 1.0f);
+    Require(Play({{portTypePadVibration, Format(stereo.channels, formatFloat), vibration.data(), unity}}).empty());
+}
+
 void TestRejectedLayouts() {
     const auto context = CreateContext();
     for (const std::uint32_t channels : {0u, 3u, 4u, 5u, 7u, 9u, 10u, 11u, 13u, 15u}) {
@@ -248,6 +277,7 @@ int main() {
     }
     TestHeightChannels();
     TestDroppedLfe();
+    TestPadPortsWithoutPadDevice();
     TestRejectedLayouts();
     return 0;
 }
