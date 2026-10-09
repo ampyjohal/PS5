@@ -43,6 +43,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
     endif()
