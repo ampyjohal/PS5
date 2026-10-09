@@ -18,10 +18,10 @@ struct BufferAllocation {
     void* mapping;
     VkDeviceAddress address;
     VkDeviceSize allocationBytes;
-    // Size the VkBuffer was created with (see BufferPool::Capacity), not the size a user asked for.
     std::size_t bytes;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    std::size_t bufferBytes = 0;
 };
 
 // Released buffer allocations kept for reuse, since creating, binding and mapping one costs tens of
