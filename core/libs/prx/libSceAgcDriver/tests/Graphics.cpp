@@ -2847,6 +2847,13 @@ void debugBranchTests() {
     for (const auto opcode : {0x17u, 0x18u, 0x19u, 0x1au}) Require(recompilesDebugBranch(opcode), "a conditional debug branch did not recompile");
 }
 
+void storeAtFlipTests() {
+    using AgcDriver::Graphics::StorageTexture;
+    Require(!StorageTexture::StoreAtFlipRequested(nullptr), "an unset APS5_STORE_AT_FLIP stored at each flip");
+    Require(StorageTexture::StoreAtFlipRequested("1"), "APS5_STORE_AT_FLIP=1 did not store at each flip");
+    for (const char* value : {"0", "", "true", "11"}) expectFailure([&] { StorageTexture::StoreAtFlipRequested(value); }, "expected 1");
+}
+
 void vertexCopyTests() {
     using AgcDriver::Graphics::PlanVertexCopies;
     using AgcDriver::Graphics::VertexFetch;
@@ -2957,6 +2964,7 @@ int main() {
         meshIndexBufferTests();
         validationTests();
         vertexCopyTests();
+        storeAtFlipTests();
         pixelParameterSlotTests();
         rectListTests();
         floatControlsModeTests();
