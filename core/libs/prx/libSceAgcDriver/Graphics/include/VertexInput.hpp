@@ -18,8 +18,17 @@ struct VertexFormat {
     const char* scalar;
 };
 
+inline bool NullVertexDescriptor(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto& fields = attribute.resource.fields;
+    return fields[0] == 0 && fields[1] == 0 && fields[2] == 0 && fields[3] == 0;
+}
+
 inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
     Require(attribute.components >= 1 && attribute.components <= 4, "invalid vertex attribute component count");
+    if (NullVertexDescriptor(attribute)) {
+        const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT};
+        return {formats[attribute.components - 1], attribute.components * 4u, 4u, "f32"};
+    }
     const auto components = attribute.formatComponents == 0u ? attribute.components : attribute.formatComponents;
     Require(components >= 1u && components <= 4u, "invalid vertex format component count");
     const auto format = (attribute.resource.fields[3] >> 12u) & 0x7fu;
@@ -108,7 +117,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         Require((fields[1] & 0x80000000u) == 0 && (fields[3] & 0x00800000u) == 0 && (fields[3] >> 30u) == 0, "unsupported vertex buffer descriptor flags");
         const auto stride = (fields[1] >> 16u) & 0x3fffu;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
-        Require(address != 0 && address % format.alignment == 0 && stride % format.alignment == 0, "unaligned vertex buffer");
+        Require(NullVertexDescriptor(attribute) || (address != 0 && address % format.alignment == 0 && stride % format.alignment == 0), "unaligned vertex buffer");
         Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
         VkFormatProperties properties{};
@@ -124,6 +133,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
 // The whole byte range a vertex buffer descriptor covers (records * stride, or records when the
 // stride is 0): what an indirect draw, whose counts only the GPU knows, copies for the fetch.
 inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& attribute) {
+    if (NullVertexDescriptor(attribute)) return DecodeVertexFormat(attribute).bytes;
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
@@ -137,6 +147,7 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
 inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t maxIndex, std::uint32_t instances, std::uint32_t firstInstance = 0) {
     Require(instances != 0, "vertex input requires nonzero instance count");
     Require(firstInstance <= std::numeric_limits<std::uint32_t>::max() - (instances - 1u), "vertex input instance range overflow");
+    if (NullVertexDescriptor(attribute)) return DecodeVertexFormat(attribute).bytes;
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
