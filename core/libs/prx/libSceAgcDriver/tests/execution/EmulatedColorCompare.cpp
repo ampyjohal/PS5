@@ -24,6 +24,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 2;
 constexpr std::uint32_t Format8888UNorm = 56;
+constexpr std::uint32_t Format8888Srgb = 130;
 constexpr std::uint32_t Format8888UInt = 60;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
@@ -38,6 +39,7 @@ constexpr std::uint32_t BorderWhite = 2;
 constexpr std::uint32_t BorderTable = 3;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
+constexpr std::uint32_t FilterAnisoPoint = 2;
 constexpr std::uint32_t FilterAnisoBilinear = 3;
 constexpr std::uint32_t ReductionMin = 1;
 constexpr std::array<std::uint8_t, 4> Red{0, 64, 128, 255};
@@ -132,7 +134,7 @@ std::int32_t OffsetComponent(std::uint32_t tid, std::uint32_t component) {
     return static_cast<std::int32_t>(field ^ 0x20u) - 0x20;
 }
 
-float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
+float ReferenceTexel(int x, int y, float reference, const Sampler& sampler, bool srgb) {
     const std::uint32_t clamp = sampler.clamp;
     const int size = static_cast<int>(Side);
     if (clamp == ClampBorder && (x < 0 || x >= size || y < 0 || y >= size)) {
@@ -144,25 +146,26 @@ float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
         const int size = static_cast<int>(Side);
         return ((value % size) + size) % size;
     };
-    const float red = static_cast<float>(Red[address(y) * Side + address(x)]) / 255.0f;
+    float red = static_cast<float>(Red[address(y) * Side + address(x)]) / 255.0f;
+    if (srgb) red = red <= 0.04045f ? red / 12.92f : std::pow((red + 0.055f) / 1.055f, 2.4f);
     return reference <= red ? 1.0f : 0.0f;
 }
 
-float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
+float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets, bool srgb) {
     const float u = Input[tid * 3u + 1u] * static_cast<float>(Side);
     const float v = Input[tid * 3u + 2u] * static_cast<float>(Side);
     const float reference = std::clamp(Input[tid * 3u + 0u], 0.0f, 1.0f);
     const int offsetX = offsets ? OffsetComponent(tid, 0u) : 0;
     const int offsetY = offsets ? OffsetComponent(tid, 1u) : 0;
-    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY, reference, sampler);
+    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY, reference, sampler, srgb);
     const float cu = u - 0.5f;
     const float cv = v - 0.5f;
     const int x = static_cast<int>(std::floor(cu)) + offsetX;
     const int y = static_cast<int>(std::floor(cv)) + offsetY;
     const float a = cu - std::floor(cu);
     const float b = cv - std::floor(cv);
-    const float top = ReferenceTexel(x, y, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler) * a;
-    const float bottom = ReferenceTexel(x, y + 1, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y + 1, reference, sampler) * a;
+    const float top = ReferenceTexel(x, y, reference, sampler, srgb) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler, srgb) * a;
+    const float bottom = ReferenceTexel(x, y + 1, reference, sampler, srgb) * (1.0f - a) + ReferenceTexel(x + 1, y + 1, reference, sampler, srgb) * a;
     return top * (1.0f - b) + bottom * b;
 }
 
@@ -191,10 +194,10 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false, bool useCache = false) {
+void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false, bool useCache = false, bool srgb = false) {
     Output.fill(-1.0f);
     const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : std::span<const std::uint32_t>(Code);
-    const auto result = Compile(device, Format8888UNorm, sampler, code, useCache);
+    const auto result = Compile(device, srgb ? Format8888Srgb : Format8888UNorm, sampler, code, useCache);
     for (const auto& binding : result.bindings) {
         Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "emulated comparison retained a sampler binding");
         Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](auto mask) { return mask == 0u; }), "emulated comparison retained an unused sampler association");
@@ -202,7 +205,7 @@ void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* na
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const float expected = Expected(tid, sampler, offsets);
+        const float expected = Expected(tid, sampler, offsets, srgb);
         const float tolerance = sampler.filter == FilterPoint ? 0.0f : 1e-4f;
         Require(std::fabs(Output[tid] - expected) <= tolerance, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
     }
@@ -236,6 +239,8 @@ int main() {
         Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge");
         Run(*device, {ClampEdge, FilterBilinear}, "bilinear, clamp to edge");
+        Run(*device, {ClampEdge, FilterPoint}, "sRGB point, clamp to edge", false, false, true);
+        Run(*device, {ClampEdge, FilterBilinear}, "sRGB bilinear, clamp to edge", false, false, true);
         Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap");
         Run(*device, {ClampBorder, FilterPoint, BorderWhite}, "point, white border");
         Run(*device, {ClampBorder, FilterPoint, BorderBlack}, "point, black border");
@@ -255,6 +260,7 @@ int main() {
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
         Reject(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
+        Reject(*device, Format8888UNorm, {ClampEdge, FilterAnisoPoint}, "point or bilinear");
         Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
         std::puts("emulated color compare tests passed");
         return 0;
