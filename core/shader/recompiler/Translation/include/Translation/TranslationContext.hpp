@@ -51,12 +51,14 @@ private:
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
+    bool fp16Overflow() const { return floatMode.has_value() && floatMode->fp16Overflow; }
+    IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
     void rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const;
     IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
-    void writeF16(const RdnaOperand& operand, IrF32 value);
+    void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
     IrU32 flushF32Denormal(IrU32 bits);
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr);
