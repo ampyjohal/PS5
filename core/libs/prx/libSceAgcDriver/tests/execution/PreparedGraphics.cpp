@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "CompiledVariant.hpp"
+#include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <vector>
@@ -234,6 +236,89 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     Reject([&] { DecodeGraphicsPrograms(invalid, queue, registry, true, true); }, "reserved graphics program address");
 }
 
+void CheckCumulativePushLayout(const ShaderRecompiler::SpirvTarget& target) {
+    constexpr std::array<std::uint32_t, 11> vertexCode{0xf4080100u, 0xfa000000u, 0x4a0a0a02u, 0x4a0a0b08u, 0x4a0a0a03u, 0xe00c2000u, 0x80010005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 5> pixelCode{0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
+    using namespace AgcDriver::DriverDetail;
+    using namespace ShaderRecompiler;
+    struct VertexHeader {
+        Shader shader{};
+        ShaderUserData users{};
+        std::array<std::uint16_t, ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT> direct{};
+        ShaderSemantic input{};
+    } header;
+    header.direct.fill(ShaderRegs::AGC_ILLEGAL_DIRECT_OFFSET);
+    header.direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexBufferTable)] = 0u;
+    header.direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexAttribDescTable)] = 2u;
+    header.users.direct_resource_offset = header.direct.data();
+    header.users.direct_resource_count = static_cast<std::uint16_t>(header.direct.size());
+    header.shader.user_data = &header.users;
+    header.shader.input_semantics = &header.input;
+    header.shader.num_input_semantics = 1u;
+    header.shader.type = 2u;
+    header.input.semantic = 0u;
+    header.input.hardware_mapping = 0u;
+    header.input.size_in_elements = 4u;
+
+    alignas(8) std::array<std::uint32_t, 4> descriptor{};
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(descriptor.data());
+    std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), 1u, 1u};
+    const auto vertexAddress = reinterpret_cast<std::uintptr_t>(vertexCode.data());
+    const auto pixelAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
+    const auto headerAddress = reinterpret_cast<std::uintptr_t>(&header);
+    auto vertexSnapshot = std::make_shared<ShaderSnapshot>();
+    vertexSnapshot->codeAddress = vertexAddress;
+    vertexSnapshot->headerAddress = headerAddress;
+    vertexSnapshot->type = 2u;
+    vertexSnapshot->code.assign(vertexCode.begin(), vertexCode.end());
+    vertexSnapshot->header.resize(sizeof(header));
+    std::memcpy(vertexSnapshot->header.data(), &header, sizeof(header));
+    auto pixelSnapshot = std::make_shared<ShaderSnapshot>();
+    pixelSnapshot->codeAddress = pixelAddress;
+    pixelSnapshot->headerAddress = 0u;
+    pixelSnapshot->type = 1u;
+    pixelSnapshot->code.assign(pixelCode.begin(), pixelCode.end());
+    pixelSnapshot->header.resize(sizeof(Shader));
+
+    DrawDecode decoded{};
+    decoded.state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
+    decoded.state.stages.vertexWaveSize = 32u;
+    decoded.state.stages.fragmentWaveSize = 32u;
+    decoded.pixel.wave32 = true;
+    decoded.pixel.targetOutputMode[0] = 9u;
+    decoded.pixel.targetExportMapping.fill(0xe4u);
+    DrawProgram front{};
+    front.binary = {ShaderStage::Vertex, vertexAddress, vertexSnapshot->code, headerAddress, vertexSnapshot->header};
+    front.userDataBase = 0u;
+    front.firstUserSgpr = 0u;
+    front.userData.assign(userData.begin(), userData.end());
+    front.memory[0] = {tableAddress, std::as_bytes(std::span(descriptor))};
+    front.snapshot = vertexSnapshot;
+    DrawProgram fragment{};
+    fragment.binary = {ShaderStage::Fragment, pixelAddress, pixelSnapshot->code, 0u, {}};
+    fragment.userDataBase = 0u;
+    fragment.firstUserSgpr = 0u;
+    fragment.snapshot = pixelSnapshot;
+    decoded.programs = {front, fragment};
+    decoded.roles = {ProgramRole::Main, ProgramRole::Fragment};
+
+    const auto stages = PrepareGraphicsStages(decoded, target);
+    Require(stages.size() == 2u, "VertexFetch link did not prepare two stages");
+    const auto vertexBytes = stages[0].entry.handle->artifact->bindings.pushConstantSizeBytes;
+    Require(vertexBytes > 0u && vertexBytes < 128u, "VertexFetch fixture must reserve a nonzero portion of the shared push block");
+    const auto& pixelArtifact = *stages[1].entry.handle->artifact;
+    Require(pixelArtifact.layout.pushConstantOffsetBytes == vertexBytes && pixelArtifact.layout.pushConstantSizeBytes == 128u - vertexBytes, "linked fragment was not prepared at the cumulative push offset");
+    for (const auto& stage : stages) stage.snapshot->prepared->entries.push_back(stage.entry);
+
+    std::vector<LinkedProgram> linked{{ProgramRole::Main, front.binary, front.userDataBase, front.firstUserSgpr, front.userData}, {ProgramRole::Fragment, fragment.binary, fragment.userDataBase, fragment.firstUserSgpr, fragment.userData}};
+    std::vector<MemoryRegion> memory(front.memory.begin(), front.memory.end());
+    memory.insert(memory.end(), fragment.memory.begin(), fragment.memory.end());
+    ShaderVertexStageInfo vertexInfo = AgcDriver::Graphics::DecodeVertexStageInfo(front.binary.header, front.binary.headerAddress, front.userData, nullptr, true);
+    RecompileRequest vertexRequest{front.binary, {32u, 0u, front.userData, {}, std::nullopt, vertexInfo, memory}, target, {0u, 0u, 0u, 128u}, GraphicsCompileContext{0u, linked, {}, {}, {}}};
+    RecompileRequest pixelRequest{fragment.binary, {32u, 0u, {}, {}, decoded.pixel, std::nullopt, memory}, target, {0u, 0u, vertexBytes, 128u - vertexBytes}, GraphicsCompileContext{0u, linked, {}, {}, {}}};
+    static_cast<void>(InvocationFor(*vertexSnapshot, 0u, vertexRequest));
+    static_cast<void>(InvocationFor(*pixelSnapshot, 0u, pixelRequest));
+}
 }
 
 int main(int argc, char** argv) {
@@ -245,6 +330,7 @@ int main(int argc, char** argv) {
         Check(*device, AgcDriver::Graphics::ShaderPath::Vertex, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Geometry, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Tessellation, dump);
+        CheckCumulativePushLayout(device->Target());
         std::cout << "prepared graphics ABI tests passed\n";
         return 0;
     } catch (const std::exception& error) {
