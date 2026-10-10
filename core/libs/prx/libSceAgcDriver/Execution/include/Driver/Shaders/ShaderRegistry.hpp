@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+namespace AgcDriver {
+class VulkanDevice;
+}
+
 namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
@@ -71,6 +75,7 @@ struct ShaderSnapshot {
 std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address);
 
 std::uint64_t NullPixelProgramAddress();
+ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device);
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
