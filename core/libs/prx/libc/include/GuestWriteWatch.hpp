@@ -13,6 +13,8 @@ void GuestWriteWatchRegister_nid_postfix(const void* pointer, std::size_t bytes)
 bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t bytes);
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes);
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
+bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
+bool GuestWriteWatchCollectFresh_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
 
 }
 
