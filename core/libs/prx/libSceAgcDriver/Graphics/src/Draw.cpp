@@ -883,12 +883,17 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     std::vector<VertexFetch> fetches;
     fetches.reserve(attributes.size());
-    for (const auto& attribute : attributes) {
+    constexpr auto noFetch = std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> fetchOf(attributes.size(), noFetch);
+    for (std::size_t i = 0; i < attributes.size(); ++i) {
+        const auto& attribute = attributes[i];
+        if (NullVertexDescriptor(attribute)) continue;
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
         const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
+        fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, (fields[1] >> 16u) & 0x3fffu, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
     }
     const auto plan = PlanVertexCopies(fetches);
@@ -900,8 +905,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.vertexBuffers.push_back(std::move(copy.buffer));
     }
     for (std::size_t i = 0; i < attributes.size(); ++i) {
-        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[i]]->Handle());
-        inputs.vertexOffsets[i] = plan.offsets[i];
+        if (fetchOf[i] == noFetch) {
+            Require(context.zeroVertexBuffer != VK_NULL_HANDLE, "no zero vertex buffer for a null V#");
+            inputs.vertexHandles.push_back(context.zeroVertexBuffer);
+            continue;
+        }
+        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[fetchOf[i]]]->Handle());
+        inputs.vertexOffsets[i] = plan.offsets[fetchOf[i]];
     }
     timer.phase(PhaseVertex);
     return inputs;
