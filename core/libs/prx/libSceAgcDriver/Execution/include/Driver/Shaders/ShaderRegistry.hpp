@@ -70,6 +70,8 @@ struct ShaderSnapshot {
 
 std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address);
 
+std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request);
+
 std::uint64_t NullPixelProgramAddress();
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot);

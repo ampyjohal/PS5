@@ -60,6 +60,7 @@ public:
     void ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
     void ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
     void ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType);
+    static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request);
 
 private:
     friend class SampledReadScope;
@@ -135,7 +136,6 @@ private:
     static void dumpPackets(std::span<const std::uint32_t> commands, const std::uint32_t* guest = nullptr);
     static void validate(const Submission& submission, const std::uint32_t* guest = nullptr);
     static void reportSkip(const char* kind, const std::string& what);
-    static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request);
     static bool matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
     static bool fillClearEnabled();
     static bool fillClearExactOnly();
