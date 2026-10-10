@@ -41,7 +41,7 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.samplerUnnormalized == right.samplerUnnormalized && left.imageUnnormalized == right.imageUnnormalized && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.samplerUnnormalized == right.samplerUnnormalized && left.imageUnnormalized == right.imageUnnormalized && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -80,6 +80,13 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
     require(left.specialization == right.specialization, prefix + "specialization constants differ");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
+    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
+    require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
+    for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
+        const auto& a = left.imageTablePoison[i];
+        const auto& b = right.imageTablePoison[i];
+        require(a.words == b.words && a.dwordCount == b.dwordCount && a.resource == b.resource && a.reason == b.reason, prefix + "image table poison differs");
+    }
     require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
@@ -114,6 +121,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
     binding.imageAtomic = {false, true, false};
+    binding.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
     binding.bufferAtomic = {true};
     binding.bufferWritten = {false, false, true, true, false};
     binding.samplerUnnormalized = {false, true, true};
@@ -152,6 +160,11 @@ RecompileResult sampleResult() {
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
     result.poisonedSrtReads = 3;
     result.variantId = 99;
+    result.imageTablePoison = {{{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, 8u, 2u, 6u}, {{9u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}, 4u, 0xffffffffu, 19u}};
+    result.imageTableRanges = {{0x1000u, 0x200u}, {0x5000000000ull, 48u}};
+    result.imageTableReadRanges = {{{0x1000u, 32u}, {0x1040u, 32u}}, {}, {{0x5000000000ull, 16u}}};
+    result.imageTableShader = 0x80003aa700ull;
+    result.imageTableFaults = 3u;
     return result;
 }
 
@@ -197,13 +210,13 @@ CompiledVariant sampleVariant() {
     image.depthBitsCompatible = false;
     image.byElements = 4;
     image.byComponents = 1;
-    image.indirectRoot = 0;
-    image.indirectMappingOffset = 12;
-    image.indirectSearchIterations = 3;
-    image.indirectResources = {1, 2, 3};
+    image.emulatedCompare = 0x1a07u;
+    image.table = 0;
+    image.tableOperation = TableOperation::Unsupported;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
-    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather}};
+    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, 1}};
+    info.info.usesFaultBuffer = true;
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
