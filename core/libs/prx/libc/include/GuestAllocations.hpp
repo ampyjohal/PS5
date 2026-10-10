@@ -18,6 +18,7 @@ struct Range {
     std::uint64_t allocationAddress;
     std::size_t allocationBytes;
     bool releasable = true;
+    bool gpu = false;
 };
 
 using Lease = std::vector<std::shared_ptr<const Range>>;
@@ -26,14 +27,14 @@ extern "C" {
 void* GuestAllocationsBegin_nid_postfix();
 void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation);
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept;
-void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable);
+void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu);
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 void GuestAllocationsRequireAvailable_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsCovers_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsOverlaps_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 Range GuestAllocationsFind_nid_postfix(void* mutation, const void* pointer);
 void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer);
-void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, const std::function<void()>& apply);
+void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply);
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply);
 Lease GuestAllocationsAcquire_nid_postfix();
 // Changes whenever a mutation ends, so callers can cache facts about guest mappings between changes.
@@ -57,7 +58,7 @@ public:
     Mutation(const Mutation&) = delete;
     Mutation& operator=(const Mutation&) = delete;
     void RegisterMainImage() { GuestAllocationsRegisterMainImage_nid_postfix(handle); }
-    void Add(void* pointer, std::size_t bytes, bool readable, bool writable) { GuestAllocationsAdd_nid_postfix(handle, pointer, bytes, readable, writable); }
+    void Add(void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu) { GuestAllocationsAdd_nid_postfix(handle, pointer, bytes, readable, writable, gpu); }
     void RequireUnpinned(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireUnpinned_nid_postfix(handle, pointer, bytes); }
     void RequireAvailable(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireAvailable_nid_postfix(handle, pointer, bytes); }
     bool Covers(const void* pointer, std::size_t bytes) const { return GuestAllocationsCovers_nid_postfix(handle, pointer, bytes); }
@@ -65,7 +66,7 @@ public:
     Range Find(const void* pointer) const { return GuestAllocationsFind_nid_postfix(handle, pointer); }
     void Remove(const void* pointer) { GuestAllocationsRemove_nid_postfix(handle, pointer); }
     void Unmap(const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) { GuestAllocationsUnmap_nid_postfix(handle, pointer, bytes, apply); }
-    void Protect(const void* pointer, std::size_t bytes, bool readable, bool writable, const std::function<void()>& apply) { GuestAllocationsProtect_nid_postfix(handle, pointer, bytes, readable, writable, apply); }
+    void Protect(const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply) { GuestAllocationsProtect_nid_postfix(handle, pointer, bytes, readable, writable, gpu, apply); }
 
 private:
     void* handle;
