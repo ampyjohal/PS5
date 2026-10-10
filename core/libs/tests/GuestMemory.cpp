@@ -5,7 +5,9 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstring>
@@ -396,6 +398,115 @@ static void CheckDirectMemoryGpuProtBits() {
     Require(static_cast<unsigned char*>(mapping)[0] == 11);
     Require(sceKernelMunmap(mapping, page) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static bool GpuMapped(const void* pointer) {
+    GuestAllocations::Mutation mutation;
+    return mutation.Find(pointer).gpu;
+}
+
+static void CheckGpuAccessFollowsProtection() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* cpu = nullptr;
+    Require(sceKernelMapDirectMemory(&cpu, page, 3, 0, phys, 0) == 0);
+    Require(!GpuMapped(cpu));
+    void* gpu = nullptr;
+    Require(sceKernelMapDirectMemory(&gpu, page, 0x32, 0, phys + static_cast<std::int64_t>(page), 0) == 0);
+    Require(GpuMapped(gpu));
+    Require(sceKernelMprotect(cpu, page, 0x13) == 0);
+    Require(GpuMapped(cpu));
+    Require(sceKernelMprotect(gpu, page, 3) == 0);
+    Require(!GpuMapped(gpu));
+    static int imageProbe = 0;
+    const auto probe = reinterpret_cast<std::uintptr_t>(&imageProbe);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterMainImage();
+    }
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        const auto image = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return probe >= range->address && probe - range->address < range->bytes; });
+        Require(image != lease.end() && !(*image)->releasable && !(*image)->gpu);
+    }
+    Require(sceKernelMunmap(cpu, page) == 0);
+    Require(sceKernelMunmap(gpu, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+    void* flexible = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&flexible, page, 3, 0, "cpu") == 0);
+    Require(!GpuMapped(flexible));
+    Require(sceKernelMunmap(flexible, page) == 0);
+    Require(sceKernelMapNamedFlexibleMemory(&flexible, page, 0x33, 0, "gpu") == 0);
+    Require(GpuMapped(flexible));
+    Require(sceKernelMunmap(flexible, page) == 0);
+}
+
+static std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
+
+static std::atomic<bool> observerEntered{false};
+static std::atomic<bool> observerDone{false};
+
+static void CheckClearingTheObserverWaitsForItsCalls() {
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix([](const GuestAllocations::Mapped&, std::uint64_t) {
+        observerEntered = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        observerDone = true;
+    });
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    void* gpu = nullptr;
+    std::thread mapper([&] { Require(sceKernelMapDirectMemory(&gpu, page, 0x32, 0, phys, 0) == 0); });
+    while (!observerEntered) std::this_thread::yield();
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
+    Require(observerDone);
+    mapper.join();
+    Require(sceKernelMunmap(gpu, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static void CheckGpuMapsAreObserved() {
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix([](const GuestAllocations::Mapped& mapped, std::uint64_t) {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& weak : mapped) {
+            const auto range = weak.lock();
+            if (range == nullptr) continue;
+            const bool registered = std::any_of(lease.begin(), lease.end(), [&](const auto& current) { return current == range; });
+            gpuMapped.emplace_back(registered && range->gpu ? range->address : 0, range->bytes);
+        }
+    });
+    constexpr std::size_t page = 0x4000;
+    void* heap = GuestHeap::GuestHeapAlign_nid_postfix(page, page);
+    Require(heap != nullptr && gpuMapped.empty());
+    GuestHeap::GuestHeapFree_nid_postfix(heap);
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* cpu = nullptr;
+    Require(sceKernelMapDirectMemory(&cpu, page, 3, 0, phys, 0) == 0);
+    Require(gpuMapped.empty());
+    void* gpu = nullptr;
+    Require(sceKernelMapDirectMemory(&gpu, page, 0x32, 0, phys + static_cast<std::int64_t>(page), 0) == 0);
+    Require(gpuMapped.size() == 1 && gpuMapped.front().first == reinterpret_cast<std::uintptr_t>(gpu) && gpuMapped.front().second == page);
+    Require(sceKernelMprotect(cpu, page, 0x13) == 0);
+    Require(gpuMapped.size() == 1);
+    std::int64_t remapPhys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &remapPhys) == 0);
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 2, 0, 0) == 0);
+    void* cpuRemap = reserved;
+    Require(sceKernelMapDirectMemory(&cpuRemap, page, 3, 0x10, remapPhys, 0) == 0 && cpuRemap == reserved);
+    Require(gpuMapped.size() == 1);
+    void* gpuRemap = static_cast<unsigned char*>(reserved) + page;
+    void* const gpuTarget = gpuRemap;
+    Require(sceKernelMapDirectMemory(&gpuRemap, page, 0x32, 0x10, remapPhys + static_cast<std::int64_t>(page), 0) == 0 && gpuRemap == gpuTarget);
+    Require(gpuMapped.size() == 2 && gpuMapped.back().first == reinterpret_cast<std::uintptr_t>(gpuTarget) && gpuMapped.back().second == page);
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
+    Require(sceKernelMunmap(reserved, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(remapPhys, page * 2) == 0);
+    Require(sceKernelMunmap(cpu, page) == 0);
+    Require(sceKernelMunmap(gpu, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
 static void CheckFixedVirtualReservation() {
@@ -1091,6 +1202,9 @@ int main() {
     CheckReleaseDirectMemoryClearsMappings();
     CheckFixedMappingReplacesPartialOverlap();
     CheckDirectMemoryGpuProtBits();
+    CheckGpuAccessFollowsProtection();
+    CheckGpuMapsAreObserved();
+    CheckClearingTheObserverWaitsForItsCalls();
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
     CheckNoOverwriteRefusesLiveMapping();
