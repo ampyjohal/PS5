@@ -6,6 +6,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <map>
 #include <memory>
@@ -139,6 +140,12 @@ std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
     return *list;
 }
 
+std::atomic<std::uint64_t> surfacesSerial{0};
+
+}
+
+std::uint64_t DepthSurfacesSerial() {
+    return surfacesSerial.load(std::memory_order_acquire);
 }
 
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
@@ -154,12 +161,14 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
     for (const auto& surface : surfaces()) {
         if (surface->context.device == context.device && sameSurface(surface->target, target)) return surface->view;
     }
+    surfacesSerial.fetch_add(1, std::memory_order_release);
     surfaces().push_back(std::make_unique<DepthSurface>(context, target));
     return surfaces().back()->view;
 }
 
 void ClearDepthSurfaces(VkDevice device) {
     std::lock_guard lock(surfacesMutex());
+    surfacesSerial.fetch_add(1, std::memory_order_release);
     std::erase_if(surfaces(), [&](const auto& surface) { return surface->context.device == device; });
 }
 

@@ -37,6 +37,10 @@ inline void Require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("AGC graphics: ") + reason);
 }
 
+struct DescriptorRejected : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 // Device entry points resolved once per device (VulkanDevice's State fills it after setup): the
 // loader's vkGetDeviceProcAddr is a name lookup under its global mutex per call, paid at every
 // record site otherwise. Null members (tests, APS5_NO_PROC_TABLE=1) resolve per call (Resolved).
@@ -138,6 +142,11 @@ struct Context {
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
     bool imageInt64Atomics = false;
+    bool runtimeDescriptorArray = false;
+    bool partiallyBound = false;
+    bool variableDescriptorCount = false;
+    std::uint32_t imageTableCapacity = 0;
+    std::uint32_t samplerTableCapacity = 0;
     bool geometryShader = false;
     bool sampleRateShading = false;
     bool nullDescriptors = false;
@@ -170,6 +179,9 @@ struct Context {
         throw std::runtime_error("AGC graphics: required Vulkan memory type is unavailable");
     }
 };
+
+std::uint32_t ImageTableCapacity(const Context& context);
+std::uint32_t SamplerTableCapacity(const Context& context);
 
 }
 
