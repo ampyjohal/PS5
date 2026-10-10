@@ -34,9 +34,14 @@
 #include <sys/resource.h>
 #endif
 
+extern "C" int* APS5_VABI __error_nid_postfix();
+
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
+constexpr int errnoNoChild = 10;
+constexpr int errnoInvalidArgument = 22;
+constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 
 std::atomic<std::uint32_t> gpoBits{0};
 constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
@@ -198,6 +203,13 @@ int APS5_VABI issetugid_nid_postfix(void) {
 
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
+}
+
+int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
+    (void)pid;
+    (void)status;
+    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
+    return -1;
 }
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
